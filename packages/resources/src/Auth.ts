@@ -40,8 +40,8 @@ export interface AuthCognitoProps {
   //       property. "userPoolProviderName" needs to be passed into Identity Pool.
   readonly userPool?: cognito.UserPoolProps | cognito.UserPool;
   readonly userPoolClient?:
-    | cognito.UserPoolClientOptions
-    | cognito.UserPoolClient;
+  | cognito.UserPoolClientOptions
+  | cognito.UserPoolClient;
   readonly defaultFunctionProps?: FunctionProps;
   readonly triggers?: AuthUserPoolTriggers;
   // deprecated
@@ -90,6 +90,8 @@ export interface AuthTwitterProps {
 export interface AuthCdkCfnIdentityPoolProps
   extends Omit<cognito.CfnIdentityPoolProps, "allowUnauthenticatedIdentities"> {
   readonly allowUnauthenticatedIdentities?: boolean;
+  readonly createAuthRole?: (identityPool: cognito.CfnIdentityPool) => iam.Role;
+  readonly createUnauthRole?: (identityPool: cognito.CfnIdentityPool) => iam.Role;
 }
 
 export class Auth extends cdk.Construct {
@@ -285,8 +287,13 @@ export class Auth extends cdk.Construct {
         ...(identityPool || {}),
       }
     );
-    this.iamAuthRole = this.createAuthRole(this.cognitoCfnIdentityPool);
-    this.iamUnauthRole = this.createUnauthRole(this.cognitoCfnIdentityPool);
+
+    this.iamAuthRole = identityPool?.createAuthRole &&
+      identityPool?.createAuthRole(this.cognitoCfnIdentityPool) ||
+      this.createAuthRole(this.cognitoCfnIdentityPool);
+    this.iamUnauthRole = identityPool?.createUnauthRole &&
+      identityPool.createUnauthRole(this.cognitoCfnIdentityPool) ||
+      this.createUnauthRole(this.cognitoCfnIdentityPool);
 
     // Attach roles to Identity Pool
     new cognito.CfnIdentityPoolRoleAttachment(
@@ -401,6 +408,7 @@ export class Auth extends cdk.Construct {
         "sts:AssumeRoleWithWebIdentity"
       ),
     });
+
 
     role.addToPolicy(
       new iam.PolicyStatement({
