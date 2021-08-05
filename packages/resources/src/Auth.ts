@@ -409,7 +409,6 @@ export class Auth extends cdk.Construct {
       ),
     });
 
-
     role.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
