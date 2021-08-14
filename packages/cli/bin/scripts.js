@@ -48,6 +48,7 @@ const cmd = {
   deploy: "deploy",
   remove: "remove",
   addCdk: "add-cdk",
+  addStack: "add-stack",
 };
 
 const internals = {
@@ -57,6 +58,7 @@ const internals = {
   [cmd.deploy]: require("../scripts/deploy"),
   [cmd.remove]: require("../scripts/remove"),
   [cmd.addCdk]: require("../scripts/add-cdk"),
+  [cmd.addStack]: require("../scripts/add-stack"),
 };
 
 const DEFAULT_STAGE = "dev";
@@ -302,6 +304,10 @@ const argv = yargs
       },
     }
   )
+  .command(
+    `${cmd.addStack} [stack-name]`,
+    "Adds another named stack to you app"
+  )
 
   .example([
     [`$0 ${cmd.start}`, "Start using the defaults"],
@@ -374,6 +380,7 @@ switch (script) {
 
     break;
   }
+  case cmd.addStack:
   case cmd.start:
   case cmd.addCdk: {
     internals[script](argv, config, cliInfo).catch((e) => {

@@ -16,6 +16,7 @@ cdk.out
 
 # Don't lint templates
 /packages/create-serverless-stack/templates/**
+/packages/cli/templates/**
 
 # Don't lint eslint tests that need to fail
 /packages/cli/test/eslint-cdk-js/**
