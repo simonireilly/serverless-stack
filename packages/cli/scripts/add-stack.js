@@ -23,7 +23,7 @@ module.exports = async function (argv, config) {
   // Must have a string name for the stack
   if (typeof stackName !== "string") {
     logger.info(chalk.red(`Supply a stack name 'sst add-stack [stack-name]'`));
-    return;
+    process.exit(1);
   }
 
   const { ext, dir } = path.parse(config.main);
@@ -31,7 +31,7 @@ module.exports = async function (argv, config) {
   // The file should have an extension in the lookup
   if (!ext || !TEMPLATE_EXTENSION_LOOKUP[ext]) {
     logger.info(chalk.red(`Entry-point main '${config.main}' is invalid`));
-    return;
+    process.exit(1);
   }
 
   const templatePath = path.join(
@@ -48,8 +48,22 @@ module.exports = async function (argv, config) {
   );
   const newStackFileName = `${pascalCaseStackName}${ext}`;
   const newStackFileLocation = path.join(process.cwd(), dir, newStackFileName);
-
   logger.info(chalk.cyan(`Adding new stack ${newStackFileLocation}`));
 
-  fs.writeFileSync(newStackFileLocation, newStackFile);
+  // Create app directory
+  if (!fs.existsSync(newStackFileLocation)) {
+    fs.writeFileSync(newStackFileLocation, newStackFile);
+  } else {
+    logger.error(
+      chalk.red(`A file called ${newStackFileLocation} already exists.`)
+    );
+    process.exit(1);
+  }
+
+  logger.info(
+    chalk.cyan(`Stack created, import it in ${config.main} to deploy`)
+  );
+  logger.info(
+    chalk.cyan(`import ${newStackFileName} from './${newStackFileName}`)
+  );
 };
