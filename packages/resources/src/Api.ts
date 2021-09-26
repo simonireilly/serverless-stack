@@ -7,6 +7,7 @@ import * as elb from "@aws-cdk/aws-elasticloadbalancingv2";
 import * as logs from "@aws-cdk/aws-logs";
 
 import { App } from "./App";
+import { Stack } from "./Stack";
 import { Function as Fn, FunctionProps, FunctionDefinition } from "./Function";
 import { Permissions } from "./util/permission";
 import * as apigV2Domain from "./util/apiGatewayV2Domain";
@@ -63,40 +64,43 @@ export interface ApiProps {
     | apigAuthorizers.HttpUserPoolAuthorizer;
   readonly defaultAuthorizationScopes?: string[];
   readonly defaultPayloadFormatVersion?: ApiPayloadFormatVersion;
+  readonly defaultThrottlingBurstLimit?: number;
+  readonly defaultThrottlingRateLimit?: number;
+  readonly stages?: Omit<apig.HttpStageProps, "httpApi">[];
 }
 
 export interface ApiFunctionRouteProps {
+  readonly function: FunctionDefinition;
+  readonly payloadFormatVersion?: ApiPayloadFormatVersion;
   readonly authorizationType?: ApiAuthorizationType;
   readonly authorizer?:
     | apigAuthorizers.HttpJwtAuthorizer
     | apigAuthorizers.HttpLambdaAuthorizer
     | apigAuthorizers.HttpUserPoolAuthorizer;
   readonly authorizationScopes?: string[];
-  readonly payloadFormatVersion?: ApiPayloadFormatVersion;
-  readonly function: FunctionDefinition;
 }
 
 export interface ApiHttpRouteProps {
+  readonly url: string;
+  readonly method?: string | apig.HttpMethod;
   readonly authorizationType?: ApiAuthorizationType;
   readonly authorizer?:
     | apigAuthorizers.HttpJwtAuthorizer
     | apigAuthorizers.HttpLambdaAuthorizer
     | apigAuthorizers.HttpUserPoolAuthorizer;
   readonly authorizationScopes?: string[];
-  readonly url: string;
-  readonly method?: string | apig.HttpMethod;
 }
 
 export interface ApiAlbRouteProps {
+  readonly albListener: elb.IApplicationListener;
+  readonly method?: string | apig.HttpMethod;
+  readonly vpcLink?: apig.IVpcLink;
   readonly authorizationType?: ApiAuthorizationType;
   readonly authorizer?:
     | apigAuthorizers.HttpJwtAuthorizer
     | apigAuthorizers.HttpLambdaAuthorizer
     | apigAuthorizers.HttpUserPoolAuthorizer;
   readonly authorizationScopes?: string[];
-  readonly albListener: elb.IApplicationListener;
-  readonly method?: string | apig.HttpMethod;
-  readonly vpcLink?: apig.IVpcLink;
 }
 
 export type ApiCustomDomainProps = apigV2Domain.CustomDomainProps;
@@ -123,11 +127,14 @@ export class Api extends cdk.Construct {
   private readonly defaultAuthorizationType?: ApiAuthorizationType;
   private readonly defaultAuthorizationScopes?: string[];
   private readonly defaultPayloadFormatVersion?: ApiPayloadFormatVersion;
+  private readonly defaultThrottlingBurstLimit?: number;
+  private readonly defaultThrottlingRateLimit?: number;
 
   constructor(scope: cdk.Construct, id: string, props?: ApiProps) {
     super(scope, id);
 
     const root = scope.node.root as App;
+    props = props || {};
     const {
       httpApi,
       routes,
@@ -139,7 +146,9 @@ export class Api extends cdk.Construct {
       defaultAuthorizationType,
       defaultAuthorizationScopes,
       defaultPayloadFormatVersion,
-    } = props || {};
+      defaultThrottlingBurstLimit,
+      defaultThrottlingRateLimit,
+    } = props;
     this.routesData = {};
     this.permissionsAttachedForAllRoutes = [];
     this.defaultFunctionProps = defaultFunctionProps;
@@ -166,6 +175,11 @@ export class Api extends cdk.Construct {
       if (customDomain !== undefined) {
         throw new Error(
           `Cannot configure the "customDomain" when "httpApi" is a construct`
+        );
+      }
+      if (props.stages !== undefined) {
+        throw new Error(
+          `Cannot configure the "stages" when "httpApi" is a construct`
         );
       }
       this.httpApi = httpApi as apig.HttpApi;
@@ -214,11 +228,40 @@ export class Api extends cdk.Construct {
         ...httpApiProps,
       });
 
-      this.accessLogGroup = apigV2AccessLog.buildAccessLogData(
-        this,
-        accessLog,
-        this.httpApi.defaultStage as apig.HttpStage
-      );
+      const httpStage = this.httpApi.defaultStage as apig.HttpStage;
+
+      // Configure throttling
+      if (
+        defaultThrottlingBurstLimit &&
+        defaultThrottlingRateLimit &&
+        httpStage.node.defaultChild
+      ) {
+        const cfnStage = httpStage.node.defaultChild as apig.CfnStage;
+        cfnStage.defaultRouteSettings = {
+          ...(cfnStage.routeSettings || {}),
+          throttlingBurstLimit: defaultThrottlingBurstLimit,
+          throttlingRateLimit: defaultThrottlingRateLimit,
+        };
+        this.defaultThrottlingBurstLimit = defaultThrottlingBurstLimit;
+        this.defaultThrottlingRateLimit = defaultThrottlingRateLimit;
+      }
+
+      // Configure access log
+      for (const def of props.stages || []) {
+        const stage = new apig.HttpStage(this, "Stage" + def.stageName, {
+          ...def,
+          httpApi: this.httpApi,
+        });
+        apigV2AccessLog.buildAccessLogData(this, accessLog, stage, false);
+      }
+
+      if (this.httpApi.defaultStage)
+        this.accessLogGroup = apigV2AccessLog.buildAccessLogData(
+          this,
+          accessLog,
+          this.httpApi.defaultStage as apig.HttpStage,
+          true
+        );
     }
 
     ///////////////////////////
@@ -238,6 +281,11 @@ export class Api extends cdk.Construct {
 
   public get routes(): string[] {
     return Object.keys(this.routesData);
+  }
+
+  public get httpApiArn(): string {
+    const stack = Stack.of(this);
+    return `arn:${stack.partition}:apigateway:${stack.region}::/apis/${this.httpApi.apiId}`;
   }
 
   public addRoutes(

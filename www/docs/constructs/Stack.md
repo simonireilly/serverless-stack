@@ -20,7 +20,7 @@ _Parameters_
 
 ### Creating a new stack
 
-Create a new stack by adding this in `lib/MyStack.js`.
+Create a new stack by adding this in `stacks/MyStack.js`.
 
 ```js
 import { Stack } from "@serverless-stack/resources";
@@ -36,7 +36,7 @@ export default class MyStack extends Stack {
 
 ### Adding to an app
 
-Add it to your app in `lib/index.js`.
+Add it to your app in `stacks/index.js`.
 
 ```js
 import MyStack from "./MyStack";
@@ -66,7 +66,7 @@ This is by design. The stacks in SST are meant to be re-deployed for multiple st
 
 ### Accessing app properties
 
-The stage, region, and app name can be accessed through the app object. In your stacks (for example, `lib/MyStack.js`) you can use.
+The stage, region, and app name can be accessed through the app object. In your stacks (for example, `stacks/MyStack.js`) you can use.
 
 ```js
 class MyStack extends sst.Stack {
@@ -95,6 +95,65 @@ class MyStack extends sst.Stack {
 ```
 
 You can use this to conditionally add stacks or resources to your app.
+
+### Specifying default function props
+
+You can set some function props and have them apply to all the functions in a stack. This **must be called before** any resources have been added to the stack; so that all functions will be created with these defaults.
+
+```js
+class MyStack extends sst.Stack {
+  constructor(scope, id, props) {
+    super(scope, id, props);
+
+    this.setDefaultFunctionProps({
+      timeout: 20,
+      memorySize: 512,
+      runtime: "go1.x",
+      environment: { TABLE_NAME: "NOTES_TABLE" },
+    });
+
+    // Start adding resources
+  }
+}
+```
+
+It'll also override any props set by the [App's `setDefaultFunctionProps`](App.md#setdefaultfunctionprops), while merging the `environment` and `permission` props.
+
+### Updating default function props
+
+You can also use [`addDefaultFunctionPermissions`](#adddefaultfunctionpermissions) and [`addDefaultFunctionEnv`](#adddefaultfunctionenv) to progressively add more permissions and environment variables to the defaults. These can be called multiple times and from anywhere.
+
+However, they only affect the functions that are created after the call.
+
+```js
+class MyStack extends sst.Stack {
+  constructor(scope, id, props) {
+    super(scope, id, props);
+
+    new Api(this, "Api1", {
+      routes: {
+        "GET /": "src/hello.main",
+      },
+    });
+
+    this.addDefaultFunctionEnv({
+      TABLE_NAME: "NOTES_TABLE"
+    });
+
+    this.addDefaultFunctionPermissions(["s3"]);
+
+    new Api(this, "Api2", {
+      routes: {
+        "GET /": "src/world.main",
+      },
+    });
+
+    // Add more resources
+  }
+}
+```
+
+So in the above example, the `addDefaultFunctionPermissions` and `addDefaultFunctionEnv` calls will only impact the functions in `Api2`.
 
 ### Prefixing resource names
 
@@ -156,6 +215,59 @@ The region here is the same as the one you can find in the `scope` instance in t
 ## Methods
 
 An instance of `Stack` contains the following methods.
+
+
+### setDefaultFunctionProps
+
+```ts
+setDefaultFunctionProps(props: FunctionProps)
+```
+
+_Parameters_
+
+- **props** `FunctionProps`
+
+The default function props to be applied to all the Lambda functions in the stack. These default values will be overridden if a [`Function`](Function.md) sets its own props. This cannot be called after any resources have been added to the stack.
+
+:::note
+The `setDefaultFunctionProps` function must be called before any resources have been added.
+:::
+
+Takes the [`FunctionProps`](Function.md#functionprops).
+
+This overrides the props from the [App's `setDefaultFunctionProps`](App.md#setdefaultfunctionprops), while merging the `permissions` and `environment` props.
+
+### addDefaultFunctionEnv
+
+```ts
+addDefaultFunctionEnv(env: { [key: string]: string })
+```
+
+_Parameters_
+
+- **env** `{ [key: string]: string }`
+
+Adds additional default environment variables to be applied to all Lambda functions in the stack.
+
+:::note
+Only functions created after a `addDefaultFunctionEnv` call will contain the new values.
+:::
+
+### addDefaultFunctionPermissions
+
+```ts
+addDefaultFunctionPermissions(permissions: Permissions)
+```
+
+_Parameters_
+
+- **permissions** `Permissions`
+
+Adds additional default [`Permissions`](../util/Permissions.md) to be applied to all Lambda functions in the stack.
+
+:::note
+Only functions created after a `addDefaultFunctionPermissions` call will contain the new values.
+:::
 
 ### addOutputs
 

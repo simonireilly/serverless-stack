@@ -7,6 +7,7 @@ export * from "./Stack";
 export * from "./Table";
 export * from "./Topic";
 export * from "./Bucket";
+export * from "./Script";
 export * from "./EventBus";
 export * from "./Function";
 export * from "./ApolloApi";
@@ -16,6 +17,7 @@ export * from "./WebSocketApi";
 export * from "./KinesisStream";
 export * from "./ApiGatewayV1Api";
 
+export * from "./NextjsSite";
 export * from "./StaticSite";
 export * from "./ReactStaticSite";
 

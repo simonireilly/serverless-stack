@@ -20,6 +20,9 @@ module.exports = {
     "https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&family=Source+Code+Pro:wght@400;700&family=Source+Sans+Pro:wght@300;400;700&display=swap",
   ],
   themeConfig: {
+    prism: {
+      additionalLanguages: ["csharp"],
+    },
     sidebarCollapsible: false,
     // The following are used as defaults but are overriden by
     // the "socialCardsUrl" in the "customFields" below.
@@ -41,13 +44,13 @@ module.exports = {
           position: "right",
         },
         {
-          href: config.forum,
-          label: "Forums",
+          href: "https://github.com/serverless-stack/serverless-stack",
+          label: "GitHub",
           position: "right",
         },
         {
-          href: "https://github.com/serverless-stack/serverless-stack",
-          label: "GitHub",
+          href: config.examples,
+          label: "Examples",
           position: "right",
         },
       ],

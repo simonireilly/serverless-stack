@@ -8,6 +8,7 @@ module.exports = {
         "deploying-your-app",
         "environment-variables",
         "debugging-with-vscode",
+        "managing-iam-credentials",
         "known-issues",
       ],
     },
@@ -34,12 +35,14 @@ module.exports = {
         "constructs/Table",
         "constructs/Topic",
         "constructs/Stack",
+        "constructs/Script", // shorter in length viewed in browser
         "constructs/Queue",
         "constructs/Bucket",
         "constructs/Function",
         "constructs/EventBus",
         "constructs/StaticSite", // shorter in length viewed in browser
         "constructs/ApolloApi",
+        "constructs/NextjsSite",
         "constructs/AppSyncApi",
         "constructs/KinesisStream", // shorter in length viewed in browser
         "constructs/WebSocketApi",

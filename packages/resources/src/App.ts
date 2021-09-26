@@ -4,11 +4,21 @@ import * as fs from "fs-extra";
 import * as spawn from "cross-spawn";
 import * as cdk from "@aws-cdk/core";
 import * as cxapi from "@aws-cdk/cx-api";
+import * as s3 from "@aws-cdk/aws-s3";
+import * as s3perms from "@aws-cdk/aws-s3/lib/perms";
+import * as iam from "@aws-cdk/aws-iam";
 import { execSync } from "child_process";
 
 import { FunctionProps, FunctionHandlerProps } from "./Function";
-import { StaticSiteEnvironmentOutputsInfo } from "./StaticSite";
+import { BaseSiteEnvironmentOutputsInfo } from "./BaseSite";
 import { getEsbuildMetafileName } from "./util/nodeBuilder";
+import {
+  CustomResource,
+  CustomResourceProvider,
+  CustomResourceProviderRuntime,
+} from "@aws-cdk/core";
+import { Permissions } from "./util/permission";
+import { ILayerVersion } from "@aws-cdk/aws-lambda";
 
 const appPath = process.cwd();
 
@@ -88,6 +98,7 @@ export interface AppDeployProps {
   readonly debugEndpoint?: string;
   readonly debugBucketArn?: string;
   readonly debugBucketName?: string;
+  readonly debugStartedAt?: number;
   readonly debugIncreaseTimeout?: boolean;
 
   /**
@@ -97,7 +108,7 @@ export interface AppDeployProps {
    */
   readonly synthCallback?: (
     lambdaHandlers: Array<FunctionHandlerProps>,
-    staticSiteEnvironments: StaticSiteEnvironmentOutputsInfo[]
+    siteEnvironments: BaseSiteEnvironmentOutputsInfo[]
   ) => void;
 }
 
@@ -123,25 +134,30 @@ export class App extends cdk.App {
   public readonly debugEndpoint?: string;
   public readonly debugBucketArn?: string;
   public readonly debugBucketName?: string;
+  public readonly debugStartedAt?: number;
   public readonly debugIncreaseTimeout?: boolean;
   public defaultFunctionProps: (
     | FunctionProps
     | ((stack: cdk.Stack) => FunctionProps)
   )[];
+  private _defaultRemovalPolicy?: cdk.RemovalPolicy;
+  public get defaultRemovalPolicy() {
+    return this._defaultRemovalPolicy;
+  }
 
   /**
    * The callback after synth completes.
    */
   private readonly synthCallback?: (
     lambdaHandlers: Array<FunctionHandlerProps>,
-    staticSiteEnvironments: StaticSiteEnvironmentOutputsInfo[]
+    siteEnvironments: BaseSiteEnvironmentOutputsInfo[]
   ) => void;
 
   /**
    * A list of Lambda functions in the app
    */
   private readonly lambdaHandlers: Array<FunctionHandlerProps> = [];
-  private readonly staticSiteEnvironments: StaticSiteEnvironmentOutputsInfo[] = [];
+  private readonly siteEnvironments: BaseSiteEnvironmentOutputsInfo[] = [];
 
   /**
    * Skip building Function code
@@ -175,6 +191,7 @@ export class App extends cdk.App {
       this.debugEndpoint = deployProps.debugEndpoint;
       this.debugBucketArn = deployProps.debugBucketArn;
       this.debugBucketName = deployProps.debugBucketName;
+      this.debugStartedAt = deployProps.debugStartedAt;
       this.debugIncreaseTimeout = deployProps.debugIncreaseTimeout;
     }
   }
@@ -184,23 +201,114 @@ export class App extends cdk.App {
     return `${this.stage}-${namePrefix}${logicalName}`;
   }
 
+  setDefaultRemovalPolicy(policy: cdk.RemovalPolicy) {
+    this._defaultRemovalPolicy = policy;
+  }
+
   setDefaultFunctionProps(
     props: FunctionProps | ((stack: cdk.Stack) => FunctionProps)
   ): void {
+    if (this.node.children.some((node) => node instanceof cdk.Stack))
+      throw new Error(
+        "Cannot call 'setDefaultFunctionProps' after a stack has been created. Please use 'addDefaultFunctionEnv' or 'addDefaultFunctionPermissions' to add more default properties. Read more about this change here: https://docs.serverless-stack.com/constructs/App#upgrading-to-v0420"
+      );
     this.defaultFunctionProps.push(props);
   }
 
-  synth(options: cdk.StageSynthesisOptions = {}): cxapi.CloudAssembly {
-    for (const child of this.node.children) {
-      if (
-        child instanceof cdk.Stack &&
-        child.stackName.indexOf(`${this.stage}-`) !== 0
-      ) {
-        throw new Error(
-          `Stack (${child.stackName}) is not prefixed with the stage. Use sst.Stack or the format {stageName}-${child.stackName}.`
-        );
+  addDefaultFunctionPermissions(permissions: Permissions) {
+    this.defaultFunctionProps.push({
+      permissions,
+    });
+  }
+
+  addDefaultFunctionEnv(environment: Record<string, string>) {
+    this.defaultFunctionProps.push({
+      environment,
+    });
+  }
+
+  addDefaultFunctionLayers(layers: ILayerVersion[]) {
+    this.defaultFunctionProps.push({
+      layers,
+    });
+  }
+
+  private applyRemovalPolicy(
+    current: cdk.IConstruct,
+    policy: cdk.RemovalPolicy
+  ) {
+    if (current instanceof cdk.CfnResource) current.applyRemovalPolicy(policy);
+
+    // Had to copy this in to enable deleting objects in bucket
+    // https://github.com/aws/aws-cdk/blob/master/packages/%40aws-cdk/aws-s3/lib/bucket.ts#L1910
+    if (
+      current instanceof s3.Bucket &&
+      !current.node.tryFindChild("AutoDeleteObjectsCustomResource")
+    ) {
+      const AUTO_DELETE_OBJECTS_RESOURCE_TYPE = "Custom::S3AutoDeleteObjects";
+      const provider = CustomResourceProvider.getOrCreateProvider(
+        current,
+        AUTO_DELETE_OBJECTS_RESOURCE_TYPE,
+        {
+          codeDirectory: path.join(
+            require.resolve("@aws-cdk/aws-s3"),
+            "../auto-delete-objects-handler"
+          ),
+          runtime: CustomResourceProviderRuntime.NODEJS_12_X,
+          description: `Lambda function for auto-deleting objects in ${current.bucketName} S3 bucket.`,
+        }
+      );
+
+      // Use a bucket policy to allow the custom resource to delete
+      // objects in the bucket
+      current.addToResourcePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            // list objects
+            ...s3perms.BUCKET_READ_METADATA_ACTIONS,
+            ...s3perms.BUCKET_DELETE_ACTIONS, // and then delete them
+          ],
+          resources: [current.bucketArn, current.arnForObjects("*")],
+          principals: [new iam.ArnPrincipal(provider.roleArn)],
+        })
+      );
+
+      const customResource = new CustomResource(
+        current,
+        "AutoDeleteObjectsCustomResource",
+        {
+          resourceType: AUTO_DELETE_OBJECTS_RESOURCE_TYPE,
+          serviceToken: provider.serviceToken,
+          properties: {
+            BucketName: current.bucketName,
+          },
+        }
+      );
+
+      // Ensure bucket policy is deleted AFTER the custom resource otherwise
+      // we don't have permissions to list and delete in the bucket.
+      // (add a `if` to make TS happy)
+      if (current.policy) {
+        customResource.node.addDependency(current.policy);
       }
     }
+    current.node.children.forEach((resource) =>
+      this.applyRemovalPolicy(resource, policy)
+    );
+  }
+  synth(options: cdk.StageSynthesisOptions = {}): cxapi.CloudAssembly {
+    for (const child of this.node.children) {
+      if (child instanceof cdk.Stack) {
+        if (this._defaultRemovalPolicy)
+          this.applyRemovalPolicy(child, this._defaultRemovalPolicy);
+
+        if (child.stackName.indexOf(`${this.stage}-`) !== 0)
+          throw new Error(
+            `Stack (${child.stackName}) is not prefixed with the stage. Use sst.Stack or the format {stageName}-${child.stackName}.`
+          );
+      }
+    }
+
     const cloudAssembly = super.synth(options);
 
     // Run lint and type check on handler input files
@@ -216,7 +324,7 @@ export class App extends cdk.App {
 
     // Run callback after synth has finished
     if (this.synthCallback) {
-      this.synthCallback(this.lambdaHandlers, this.staticSiteEnvironments);
+      this.synthCallback(this.lambdaHandlers, this.siteEnvironments);
     }
 
     return cloudAssembly;
@@ -231,10 +339,8 @@ export class App extends cdk.App {
     this.lambdaHandlers.push(handler);
   }
 
-  registerStaticSiteEnvironment(
-    environment: StaticSiteEnvironmentOutputsInfo
-  ): void {
-    this.staticSiteEnvironments.push(environment);
+  registerSiteEnvironment(environment: BaseSiteEnvironmentOutputsInfo): void {
+    this.siteEnvironments.push(environment);
   }
 
   processInputFiles(): void {

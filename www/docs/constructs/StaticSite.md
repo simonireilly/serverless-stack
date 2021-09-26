@@ -111,7 +111,6 @@ console.log(process.env.REACT_APP_USER_POOL_CLIENT);
 
 And in your HTML files:
 
-
 ```html title="public/index.html"
 <p>Api endpoint is: %REACT_APP_API_URL%</p>
 ```
@@ -138,7 +137,7 @@ On `sst deploy`, the environment variables will first be replaced by placeholder
 
 To use these values while developing, run `sst start` to start the [Live Lambda Development](../live-lambda-development.md) environment.
 
-``` bash
+```bash
 npx sst start
 ```
 
@@ -161,7 +160,7 @@ And tweak the `start` script to:
 
 Now you can start your app as usual and it'll have the environment variables from your SST app.
 
-``` bash
+```bash
 npm run start
 ```
 
@@ -180,13 +179,14 @@ There are a couple of things happening behind the scenes here:
   sst.json
   react-app/
 ```
+
 :::
 
-### Configuring custom domains
+### Configuring custom domains hosted on Route 53
 
-You can also configure the website with a custom domain. SST currently supports domains that are configured using [Route 53](https://aws.amazon.com/route53/). If your domains are hosted elsewhere, you can [follow this guide to migrate them to Route 53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html).
+You can configure the website with a custom domain hosted either on [Route 53](https://aws.amazon.com/route53/) or [externally](#configuring-externally-hosted-domain).
 
-#### Using the basic config
+#### Using the basic config (Route 53 domains)
 
 ```js {3}
 new StaticSite(this, "Site", {
@@ -195,7 +195,7 @@ new StaticSite(this, "Site", {
 });
 ```
 
-#### Redirect www to non-www
+#### Redirect www to non-www (Route 53 domains)
 
 ```js {3-6}
 new StaticSite(this, "Site", {
@@ -207,7 +207,7 @@ new StaticSite(this, "Site", {
 });
 ```
 
-#### Configuring domains across stages
+#### Configuring domains across stages (Route 53 domains)
 
 ```js {7-10}
 export default class MyStack extends Stack {
@@ -217,7 +217,8 @@ export default class MyStack extends Stack {
     new StaticSite(this, "Site", {
       path: "path/to/src",
       customDomain: {
-        domainName: scope.stage === "prod" ? "domain.com" : `${scope.stage}.domain.com`,
+        domainName:
+          scope.stage === "prod" ? "domain.com" : `${scope.stage}.domain.com`,
         domainAlias: scope.stage === "prod" ? "www.domain.com" : undefined,
       },
     });
@@ -225,7 +226,7 @@ export default class MyStack extends Stack {
 }
 ```
 
-#### Using the full config
+#### Using the full config (Route 53 domains)
 
 ```js {3-7}
 new StaticSite(this, "Site", {
@@ -238,7 +239,7 @@ new StaticSite(this, "Site", {
 });
 ```
 
-#### Importing an existing certificate
+#### Importing an existing certificate (Route 53 domains)
 
 ```js {7}
 import { Certificate } from "@aws-cdk/aws-certificatemanager";
@@ -254,7 +255,7 @@ new StaticSite(this, "Site", {
 
 Note that, the certificate needs be created in the `us-east-1`(N. Virginia) region as required by AWS CloudFront.
 
-#### Specifying a hosted zone
+#### Specifying a hosted zone (Route 53 domains)
 
 If you have multiple hosted zones for a given domain, you can choose the one you want to use to configure the domain.
 
@@ -273,9 +274,28 @@ new StaticSite(this, "Site", {
 });
 ```
 
+#### Configuring externally hosted domain
+
+```js {5-8}
+import { Certificate } from "@aws-cdk/aws-certificatemanager";
+
+new StaticSite(this, "Site", {
+  path: "path/to/src",
+  customDomain: {
+    isExternalDomain: true,
+    domainName: "domain.com",
+    certificate: Certificate.fromCertificateArn(this, "MyCert", certArn),
+  },
+});
+```
+
+Note that the certificate needs be created in the `us-east-1`(N. Virginia) region as required by AWS CloudFront, and validated. After the `Distribution` has been created, create a CNAME DNS record for your domain name with the `Distribution's` URL as the value. Here are more details on [configuring SSL Certificate on externally hosted domains](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html).
+
+Also note that you can also migrate externally hosted domains to Route 53 by [following this guide](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html).
+
 ### Configure caching
 
-Configure the Cache Control settings based on differnt file types.
+Configure the Cache Control settings based on different file types.
 
 ```js {6-17}
 new StaticSite(this, "Site", {
@@ -508,7 +528,9 @@ The directory with the content that will be uploaded to the S3 bucket. If a `bui
 
 _Type_ : `string | StaticSiteDomainProps`
 
-The customDomain for this website. SST currently supports domains that are configured using [Route 53](https://aws.amazon.com/route53/). If your domains are hosted elsewhere, you can [follow this guide to migrate them to Route 53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html).
+The customDomain for this website. SST supports domains that are hosted either on [Route 53](https://aws.amazon.com/route53/) or externally.
+
+Note that you can also migrate externally hosted domains to Route 53 by [following this guide](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html).
 
 Takes either the domain as a string.
 
@@ -550,6 +572,18 @@ s3 cp CONTENT_DIR s3://BUCKET_NAME/deploy-2021-06-21T06:05:37.720Z --recursive -
 
 After the `s3 cp` commands are run, the construct will run an `s3 sync` command to upload all files not explicitely configured in `fileOptions`.
 
+### environment?
+
+_Type_ : `{ [key: string]: string }`
+
+An associative array with the key being the environment variable name. Note, this requires your build tool to support build time environment variables.
+
+```js
+{
+  REACT_APP_API_URL: api.url;
+}
+```
+
 ### replaceValues?
 
 _Type_ : [`StaticSiteReplaceProps`](#staticsitereplaceprops)[]
@@ -586,7 +620,7 @@ _Type_ : `string`
 
 The domain to be assigned to the website URL (ie. `domain.com`).
 
-Currently supports domains that are configured using [Route 53](https://aws.amazon.com/route53/).
+Supports domains that are hosted either on [Route 53](https://aws.amazon.com/route53/) or externally.
 
 ### domainAlias?
 
@@ -595,18 +629,6 @@ _Type_ : `string`, _defaults to no alias configured_
 An alternative domain to be assigned to the website URL. Visitors to the alias will be redirected to the main domain. (ie. `www.domain.com`).
 
 Use this to create a `www.` version of your domain and redirect visitors to the root domain.
-
-### environment
-
-_Type_ : `{ [key: string]: string }`
-
-An associative array with the key being the environment variable name. Note, this requires your build tool to support build time environment variables.
-
-```js
-{
-  REACT_APP_API_URL: api.url
-}
-```
 
 ### hostedZone?
 
@@ -623,6 +645,12 @@ _Type_ : [`cdk.aws-certificatemanager.ICertificate`](https://docs.aws.amazon.com
 The certificate for the domain. By default, SST will create a certificate with the domain name from the `domainName` option. The certificate will be created in the `us-east-1`(N. Virginia) region as required by AWS CloudFront.
 
 Set this option if you have an existing certificate in the `us-east-1` region in AWS Certificate Manager you want to use.
+
+### isExternalDomain?
+
+_Type_ : `boolean`, _defaults to `false`_
+
+Set this option if the domain is not hosted on Amazon Route 53.
 
 ## StaticSiteFileOption
 
@@ -662,7 +690,7 @@ A string that is to be replaced by the `replace` prop. Note that this isn't a re
 
 _Type_ : `string`
 
-The string that replaces the substring specified by the specified `search` prop. 
+The string that replaces the substring specified by the specified `search` prop.
 
 ## StaticSiteCdkDistributionProps
 
@@ -674,6 +702,6 @@ You can use `StaticSiteCdkDistributionProps` to configure the CloudFront distrib
 
 An enum with the following members representing the field types.
 
-| Member | Description                                                                       |
-| ------ | --------------------------------------------------------------------------------- |
+| Member                 | Description                                  |
+| ---------------------- | -------------------------------------------- |
 | REDIRECT_TO_INDEX_PAGE | Redirect any invalid url to the `indexPage`. |

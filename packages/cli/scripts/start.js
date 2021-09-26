@@ -3,6 +3,7 @@
 const os = require("os");
 const zlib = require("zlib");
 const path = require("path");
+const util = require("util");
 const AWS = require("aws-sdk");
 const fs = require("fs-extra");
 const chalk = require("chalk");
@@ -25,12 +26,14 @@ const {
   updateCache,
   isGoRuntime,
   isNodeRuntime,
+  isDotnetRuntime,
   isPythonRuntime,
   prepareCdk,
   writeConfig,
   getTsBinPath,
   checkFileExists,
   getEsbuildTarget,
+  writeOutputsFile,
   printDeployResults,
   generateStackChecksums,
   loadEsbuildConfigOverrides,
@@ -61,6 +64,9 @@ let lambdaServer;
 let debugEndpoint;
 let debugBucketArn;
 let debugBucketName;
+// This flag is currently used by the "sst.Script" construct to make the "BuiltAt"
+// remain the same when rebuilding infrastructure.
+const debugStartedAt = Date.now();
 
 const clientState = {
   ws: null,
@@ -122,6 +128,7 @@ module.exports = async function (argv, config, cliInfo) {
     onRunTypeCheck: (srcPath, inputFiles, tsconfig) =>
       handleRunTypeCheck(srcPath, inputFiles, tsconfig, config),
     onCompileGo: handleCompileGo,
+    onBuildDotnet: handleBuildDotnet,
     onBuildPython: handleBuildPython,
     onAddWatchedFiles: handleAddWatchedFiles,
     onRemoveWatchedFiles: handleRemoveWatchedFiles,
@@ -237,6 +244,7 @@ async function deployApp(argv, config, cliInfo, cacheData) {
     debugEndpoint,
     debugBucketArn,
     debugBucketName,
+    debugStartedAt,
     debugIncreaseTimeout: argv.increaseTimeout || false,
   });
 
@@ -274,6 +282,14 @@ async function deployApp(argv, config, cliInfo, cacheData) {
       logger.info("");
       await printMockedDeployResults(deployRet);
     }
+  }
+
+  // Write outputsFile
+  if (argv.outputsFile) {
+    await writeOutputsFile(
+      deployRet,
+      path.join(paths.appPath, argv.outputsFile)
+    );
   }
 
   return deployRet;
@@ -552,7 +568,7 @@ async function runTranspileNode(
 
   // Start esbuild service is has not started
   if (!esbuildService) {
-    esbuildService = await esbuild.startService();
+    esbuildService = esbuild;
   }
 
   // Get custom esbuild config
@@ -561,10 +577,10 @@ async function runTranspileNode(
     ? await loadEsbuildConfigOverrides(esbuildConfig)
     : {};
 
-  return await esbuildService.build({
+  const result = await esbuildService.build({
     external: await getEsbuildExternal(srcPath),
     loader: getEsbuildLoader(bundle),
-    metafile,
+    metafile: true,
     tsconfig,
     bundle: true,
     format: "cjs",
@@ -578,6 +594,8 @@ async function runTranspileNode(
     logLevel: process.env.DEBUG ? "warning" : "error",
     ...esbuildConfigOverrides,
   });
+  require("fs").writeFileSync(metafile, JSON.stringify(result.metafile));
+  return result;
 }
 async function runReTranspileNode(esbuilder) {
   await esbuilder.rebuild();
@@ -861,6 +879,98 @@ function runCompile(srcPath, handler) {
         resolve({
           outEntry: path.join(absSrcPath, relBinPath),
         });
+      }
+    });
+  });
+}
+
+//////////////////////////////////////
+// Lambda Reloader functions - .NET //
+//////////////////////////////////////
+
+async function handleBuildDotnet({ srcPath, handler, onSuccess, onFailure }) {
+  try {
+    const { outEntry } = await runBuildDotnet(srcPath, handler);
+    onSuccess({
+      outEntryPoint: {
+        entry: outEntry,
+        handler,
+        origHandlerFullPosixPath: getHandlerFullPosixPath(srcPath, handler),
+      },
+      inputFiles: [],
+    });
+  } catch (e) {
+    logger.debug("handleBuildDotnet error", e);
+    onFailure(e);
+  }
+}
+function runBuildDotnet(srcPath, handler) {
+  // Sample input:
+  //  srcPath     'services/user-service'
+  //  handler     'Api::Api.MyClass::MyFn'
+  //
+  // Sample output path:
+  //  assembly          'Api'
+  //  absSrcPath        'services/user-service'
+  //  absHandlerPath    'services/user-service/Api::Api.MyClass::MyFn'
+  //  absOutputPath     'services/user-service/.build/Api-Api.MyClass-MyFn'
+  //  outEntry          'services/user-service/.build/Api-Api.MyClass-MyFn/Api.dll'
+
+  const assembly = handler.split("::")[0];
+  const absSrcPath = path.join(paths.appPath, srcPath);
+  const absHandlerPath = path.join(paths.appPath, srcPath, handler);
+  // On Windows, you cannot have ":" in a folder name
+  const absOutputPath = path
+    .join(paths.appPath, srcPath, paths.appBuildDir, handler)
+    .replace(/::/g, "-");
+  const outEntry = path.join(absOutputPath, `${assembly}.dll`);
+
+  logger.debug(`Building ${absHandlerPath}...`);
+
+  return new Promise((resolve, reject) => {
+    const cp = spawn(
+      "dotnet",
+      [
+        "publish",
+        "--output",
+        absOutputPath,
+        "--configuration",
+        "Release",
+        "--framework",
+        "netcoreapp3.1",
+        "/p:GenerateRuntimeConfigurationFiles=true",
+        // warnings are not reported for repeated builds by default and this flag
+        // does a clean before build. It takes a little longer to run, but the
+        // warnings are consistently printed on each build.
+        //"/target:Rebuild",
+        "--self-contained",
+        "false",
+        // do not print "Build Engine version"
+        "-nologo",
+        // only print errors
+        "--verbosity",
+        process.env.DEBUG ? "minimal" : "quiet",
+      ],
+      {
+        stdio: "inherit",
+        cwd: absSrcPath,
+      }
+    );
+
+    cp.on("error", (e) => {
+      logger.debug(".NET build error", e);
+    });
+
+    cp.on("close", (code) => {
+      logger.debug(`.NET build exited with code ${code}`);
+      if (code !== 0) {
+        reject(
+          new Error(
+            `There was an problem compiling the handler at "${absHandlerPath}".`
+          )
+        );
+      } else {
+        resolve({ outEntry });
       }
     });
   });
@@ -1289,6 +1399,33 @@ async function onClientMessage(message) {
         AWS_LAMBDA_RUNTIME_API: `${lambdaServer.host}:${lambdaServer.port}/${debugRequestId}`,
       },
     });
+  } else if (isDotnetRuntime(runtime)) {
+    lambda = spawn(
+      "dotnet",
+      [
+        "exec",
+        path.join(
+          paths.ownPath,
+          "scripts",
+          "util",
+          "dotnet-bootstrap",
+          "release",
+          "dotnet-bootstrap.dll"
+        ),
+        transpiledHandler.entry,
+        transpiledHandler.handler,
+      ],
+      {
+        stdio: "pipe",
+        cwd: paths.appPath,
+        env: {
+          ...getSystemEnv(),
+          ...env,
+          IS_LOCAL: true,
+          AWS_LAMBDA_RUNTIME_API: `${lambdaServer.host}:${lambdaServer.port}/${debugRequestId}`,
+        },
+      }
+    );
   }
 
   // For non-Node runtimes, stdio is set to 'pipe', need to print out the output
@@ -1429,23 +1566,25 @@ async function onClientMessage(message) {
       if (isNodeRuntime(runtime)) {
         // NodeJS: print deserialized error
         errorMessage = deserializeError(lambdaResponse.error);
-      } else if (isGoRuntime(runtime) || isPythonRuntime(runtime)) {
+      } else if (
+        isGoRuntime(runtime) ||
+        isPythonRuntime(runtime) ||
+        isDotnetRuntime(runtime)
+      ) {
         // Print rawError b/c error has been converted to a NodeJS error object.
         // We will remove this hack after we create a stub in native runtime.
         errorMessage = lambdaResponse.rawError;
       }
       clientLogger.info(
         `${chalk.grey(context.awsRequestId)} ${chalk.red("ERROR")}`,
-        errorMessage
+        util.inspect(errorMessage, { depth: null })
       );
     } else if (lambdaResponse.type === "exit") {
-      const message =
-        lambdaResponse.code === 0
-          ? "Runtime exited without providing a reason"
-          : `Runtime exited with error: exit status ${lambdaResponse.code}`;
       clientLogger.info(
         `${chalk.grey(context.awsRequestId)} ${chalk.red("ERROR")}`,
-        message
+        lambdaResponse.code === 0
+          ? "Runtime exited without providing a reason"
+          : `Runtime exited with error: exit status ${lambdaResponse.code}`
       );
     }
   }

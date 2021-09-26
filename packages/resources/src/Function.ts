@@ -14,6 +14,7 @@ import { App } from "./App";
 import { Stack } from "./Stack";
 import { builder as goBuilder } from "./util/goBuilder";
 import { builder as nodeBuilder } from "./util/nodeBuilder";
+import { builder as dotnetBuilder } from "./util/dotnetBuilder";
 import { builder as pythonBuilder } from "./util/pythonBuilder";
 import {
   PermissionType,
@@ -33,6 +34,10 @@ const supportedRuntimes = [
   lambda.Runtime.PYTHON_3_6,
   lambda.Runtime.PYTHON_3_7,
   lambda.Runtime.PYTHON_3_8,
+  lambda.Runtime.DOTNET_CORE_1,
+  lambda.Runtime.DOTNET_CORE_2,
+  lambda.Runtime.DOTNET_CORE_2_1,
+  lambda.Runtime.DOTNET_CORE_3_1,
   lambda.Runtime.GO_1_X,
 ];
 
@@ -45,32 +50,49 @@ export interface FunctionProps
    * Path to the entry point and handler function. Of the format:
    * `/path/to/file.function`.
    */
-  readonly handler?: string;
+  handler?: string;
   /**
    * The source directory where the entry point is located. The node_modules in this
    * directory is used to generate the bundle.
    *
    * @default - Defaults to the app directory.
    */
-  readonly srcPath?: string;
+  srcPath?: string;
   /**
    * The runtime environment.
    *
    * @default - Defaults to NODEJS_12_X
    */
-  readonly runtime?: string | lambda.Runtime;
+  runtime?:
+    | "nodejs"
+    | "nodejs4.3"
+    | "nodejs6.10"
+    | "nodejs8.10"
+    | "nodejs10.x"
+    | "nodejs12.x"
+    | "nodejs14.x"
+    | "python2.7"
+    | "python3.6"
+    | "python3.7"
+    | "python3.8"
+    | "dotnetcore1.0"
+    | "dotnetcore2.0"
+    | "dotnetcore2.1"
+    | "dotnetcore3.1"
+    | "go1.x"
+    | lambda.Runtime;
   /**
    * The amount of memory in MB allocated.
    *
    * @default - Defaults to 1024
    */
-  readonly memorySize?: number;
+  memorySize?: number;
   /**
    * The execution timeout in seconds.
    *
    * @default - number
    */
-  readonly timeout?: number | cdk.Duration;
+  timeout?: number | cdk.Duration;
   /**
    * Enable AWS X-Ray Tracing.
    *
@@ -82,24 +104,24 @@ export interface FunctionProps
    *
    * @default - Defaults to true
    */
-  readonly enableLiveDev?: boolean;
+  enableLiveDev?: boolean;
 
-  readonly tracing?: lambda.Tracing;
+  tracing?: lambda.Tracing;
   /**
    * Disable bundling with esbuild.
    *
    * @default - Defaults to true
    */
-  readonly bundle?: FunctionBundleProp;
-  readonly permissions?: Permissions;
-  readonly layers?: lambda.ILayerVersion[];
+  bundle?: FunctionBundleProp;
+  permissions?: Permissions;
+  layers?: lambda.ILayerVersion[];
 }
 
 export interface FunctionHandlerProps {
-  readonly srcPath: string;
-  readonly handler: string;
-  readonly bundle: FunctionBundleProp;
-  readonly runtime: string;
+  srcPath: string;
+  handler: string;
+  bundle: FunctionBundleProp;
+  runtime: string;
 }
 
 export type FunctionBundleProp = FunctionBundleObject | boolean;
@@ -112,44 +134,45 @@ export type FunctionBundleBase = {
 };
 
 export interface FunctionBundleNodejsProps {
-  readonly loader?: { [ext: string]: esbuild.Loader };
-  readonly externalModules?: string[];
-  readonly nodeModules?: string[];
-  readonly commandHooks?: lambdaNode.ICommandHooks;
-  readonly esbuildConfig?: string;
+  loader?: { [ext: string]: esbuild.Loader };
+  externalModules?: string[];
+  nodeModules?: string[];
+  commandHooks?: lambdaNode.ICommandHooks;
+  esbuildConfig?: string;
 }
 
 export interface FunctionBundlePythonProps {
-  readonly installCommands?: string[];
+  installCommands?: string[];
 }
 
 export interface FunctionBundleCopyFilesProps {
-  readonly from: string;
-  readonly to: string;
+  from: string;
+  to?: string;
 }
 
 export class Function extends lambda.Function {
+  public readonly _isLiveDevEnabled: boolean;
+
   constructor(scope: cdk.Construct, id: string, props: FunctionProps) {
     const root = scope.node.root as App;
+    const stack = Stack.of(scope) as Stack;
 
     // Merge with app defaultFunctionProps
     // note: reverse order so later prop override earlier ones
-    root.defaultFunctionProps.reverse().forEach((per) => {
-      props =
-        typeof per === "function"
-          ? Function.mergeProps(per(Stack.of(scope)), props)
-          : Function.mergeProps(per, props);
+    stack.defaultFunctionProps.reverse().forEach((per) => {
+      props = Function.mergeProps(per, props);
     });
 
     // Set defaults
     const handler = props.handler;
     let timeout = props.timeout || 10;
-    const srcPath = props.srcPath || ".";
+    const srcPath = Function.normalizeSrcPath(props.srcPath || ".");
     const memorySize = props.memorySize || 1024;
     const tracing = props.tracing || lambda.Tracing.ACTIVE;
     let runtime = props.runtime || lambda.Runtime.NODEJS_12_X;
     let bundle = props.bundle;
     const permissions = props.permissions;
+    const isLiveDevEnabled = props.enableLiveDev === false ? false : true;
 
     // Validate handler
     if (!handler) {
@@ -164,7 +187,7 @@ export class Function extends lambda.Function {
     );
     if (!runtimeClass) {
       throw new Error(
-        `The specified runtime is not supported for sst.Function. Only NodeJS, Python, and Go runtimes are currently supported.`
+        `The specified runtime is not supported for sst.Function. Only NodeJS, Python, Go, and .NET runtimes are currently supported.`
       );
     }
     runtime = runtimeClass;
@@ -178,6 +201,7 @@ export class Function extends lambda.Function {
     const isNodeRuntime = runtimeStr.startsWith("nodejs");
     const isGoRuntime = runtimeStr.startsWith("go");
     const isPythonRuntime = runtimeStr.startsWith("python");
+    const isDotnetRuntime = runtimeStr.startsWith("dotnetcore");
     if (isNodeRuntime) {
       bundle = bundle === undefined ? true : props.bundle;
       if (!bundle && srcPath === ".") {
@@ -201,8 +225,8 @@ export class Function extends lambda.Function {
     //   fail and retry. So when launching `sst start`, a couple of retry requests
     //   from recent failed request will be received. And this behavior is confusing.
     if (
+      isLiveDevEnabled &&
       root.local &&
-      props.enableLiveDev !== false &&
       root.debugEndpoint &&
       root.debugBucketName &&
       root.debugBucketArn
@@ -264,7 +288,16 @@ export class Function extends lambda.Function {
     // Handle build
     else {
       let outCode: lambda.AssetCode, outHandler;
-      if (isGoRuntime) {
+      if (isDotnetRuntime) {
+        const ret = dotnetBuilder({
+          srcPath,
+          handler,
+          buildDir: root.buildDir,
+          stack: Stack.of(scope).stackName,
+        });
+        outCode = ret.outCode;
+        outHandler = ret.outHandler;
+      } else if (isGoRuntime) {
         const ret = goBuilder({
           srcPath,
           handler,
@@ -278,6 +311,7 @@ export class Function extends lambda.Function {
           srcPath,
           handler,
           runtime,
+          stack: Stack.of(scope).stackName,
         });
         outCode = ret.outCode;
         outHandler = ret.outHandler;
@@ -325,12 +359,18 @@ export class Function extends lambda.Function {
       bundle,
       runtime: runtimeStr,
     } as FunctionHandlerProps);
+
+    this._isLiveDevEnabled = isLiveDevEnabled;
   }
 
-  attachPermissions(permissions: Permissions): void {
+  public attachPermissions(permissions: Permissions): void {
     if (this.role) {
       attachPermissionsToRole(this.role as iam.Role, permissions);
     }
+  }
+
+  static normalizeSrcPath(srcPath: string): string {
+    return srcPath.replace(/\/+$/, "");
   }
 
   static copyFiles(
@@ -342,8 +382,17 @@ export class Function extends lambda.Function {
     if (typeof bundle === "boolean") return;
     if (!bundle.copyFiles) return;
 
-    bundle.copyFiles.forEach(({ from, to }) => {
-      const fromPath = path.join(srcPath, from);
+    bundle.copyFiles.forEach((entry) => {
+      const fromPath = path.join(srcPath, entry.from);
+      if (!fs.existsSync(fromPath))
+        throw new Error(
+          `Tried to copy nonexistent file from "${path.resolve(
+            fromPath
+          )}" - check copyFiles entry "${entry.from}"`
+        );
+      const to = entry.to || entry.from;
+      if (path.isAbsolute(to))
+        throw new Error(`Copy destination path "${to}" must be relative`);
       const toPath = path.join(buildPath, to);
       fs.copySync(fromPath, toPath);
     });

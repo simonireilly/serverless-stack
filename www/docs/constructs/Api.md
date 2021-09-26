@@ -2,8 +2,8 @@
 description: "Docs for the sst.Api construct in the @serverless-stack/resources package"
 ---
 
-import TabItem from '@theme/TabItem';
-import MultiLanguageCode from '@site/src/components/MultiLanguageCode';
+import TabItem from "@theme/TabItem";
+import MultiLanguageCode from "@site/src/components/MultiLanguageCode";
 
 The `Api` construct is a higher level CDK construct that makes it easy to create an API. It provides a simple way to define the routes in your API. And allows you to configure the specific Lambda functions if necessary. It also allows you to configure authorization and custom domains. See the [examples](#examples) for more details.
 
@@ -202,11 +202,11 @@ new Api(this, "Api", {
 Override the default behavior of allowing all methods, and only allow the GET method.
 
 ```js {4-6}
-import { HttpMethod } from "@aws-cdk/aws-apigatewayv2";
+import { CorsHttpMethod } from "@aws-cdk/aws-apigatewayv2";
 
 new Api(this, "Api", {
   cors: {
-    allowMethods: [HttpMethod.GET],
+    allowMethods: [CorsHttpMethod.GET],
   },
   routes: {
     "GET /notes": "src/list.main",
@@ -531,6 +531,19 @@ new Api(this, "Api", {
   },
 });
 ```
+### Configuring throttling
+
+
+```js {2-3}
+new Api(this, "Api", {
+  defaultThrottlingRateLimit: 2000,
+  defaultThrottlingBurstLimit: 100,
+  routes: {
+    "GET  /notes": "list.main",
+    "POST /notes": "create.main",
+  },
+});
+```
 
 ### Getting the function for a route
 
@@ -581,7 +594,7 @@ You can create the Api construct in one stack, and add routes in other stacks. T
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js {7-12} title="lib/MainStack.js"
+```js {7-12} title="stacks/MainStack.js"
 import { Api, Stack } from "@serverless-stack/resources";
 
 export class MainStack extends Stack {
@@ -601,7 +614,7 @@ export class MainStack extends Stack {
 </TabItem>
 <TabItem value="ts">
 
-```js {4,9-14} title="lib/MainStack.ts"
+```js {4,9-14} title="stacks/MainStack.ts"
 import { Api, App, Stack, StackProps } from "@serverless-stack/resources";
 
 export class MainStack extends Stack {
@@ -628,7 +641,7 @@ Then pass the Api to a different stack. Behind the scenes, the Api Id is exporte
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js {3} title="lib/index.js"
+```js {3} title="stacks/index.js"
 const mainStack = new MainStack(app, "main");
 
 new AnotherStack(app, "another", { api: mainStack.api });
@@ -637,7 +650,7 @@ new AnotherStack(app, "another", { api: mainStack.api });
 </TabItem>
 <TabItem value="ts">
 
-```ts {3} title="lib/index.ts"
+```ts {3} title="stacks/index.ts"
 const mainStack = new MainStack(app, "main");
 
 new AnotherStack(app, "another", { api: mainStack.api });
@@ -651,7 +664,7 @@ Finally, call `addRoutes`. Note that the AWS resources for the added routes will
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js title="lib/AnotherStack.js"
+```js title="stacks/AnotherStack.js"
 import { Stack } from "@serverless-stack/resources";
 
 export class AnotherStack extends Stack {
@@ -670,7 +683,7 @@ export class AnotherStack extends Stack {
 </TabItem>
 <TabItem value="ts">
 
-```ts title="lib/AnotherStack.ts"
+```ts title="stacks/AnotherStack.ts"
 import { Api, App, Stack, StackProps } from "@serverless-stack/resources";
 
 interface AnotherStackProps extends StackProps {
@@ -697,7 +710,7 @@ export class AnotherStack extends Stack {
 
 If a `defaultAuthorizer` is configured for the Api, it will be applied to all routes, across all stacks.
 
-```js {4-10} title="lib/MainStack.js"
+```js {4-10} title="stacks/MainStack.js"
 import { HttpLambdaAuthorizer } from "@aws-cdk/aws-apigatewayv2-authorizers";
 
 const api = new Api(this, "Api", {
@@ -717,7 +730,7 @@ const api = new Api(this, "Api", {
 this.api = api;
 ```
 
-```js title="lib/AnotherStack.js"
+```js title="stacks/AnotherStack.js"
 props.api.addRoutes(this, {
   "GET    /notes/{id}": "src/get.main",
   "PUT    /notes/{id}": "src/update.main",
@@ -961,6 +974,18 @@ For example, `["user.id", "user.email"]`.
 _Type_ : `ApiPayloadFormatVersion`, _defaults to_ `ApiPayloadFormatVersion.V2`
 
 The [payload format versions](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html#http-api-develop-integrations-lambda.proxy-format) for all the endpoints in the API. Set using [`ApiPayloadFormatVersion`](#apipayloadformatversion). Supports 2.0 and 1.0. Defaults to 2.0, `ApiPayloadFormatVersion.V2`.
+
+### defaultThrottlingBurstLimit?
+
+_Type_ : `number`
+
+The [burst rate](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-throttling.html) of the number of concurrent request for all the routes in the API.
+
+### defaultThrottlingRateLimit?
+
+_Type_ : `number`
+
+The [steady-state rate](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-throttling.html) of the number of concurrent request for all the routes in the API.
 
 ## ApiFunctionRouteProps
 

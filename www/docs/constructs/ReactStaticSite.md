@@ -4,7 +4,7 @@ description: "Docs for the sst.ReactStaticSite construct in the @serverless-stac
 
 The `ReactStaticSite` construct is a higher level CDK construct that makes it easy to create a React single page app. It provides a simple way to build and deploy the site to an S3 bucket; setup a CloudFront CDN for fast content delivery; and configure a custom domain for the website URL.
 
-It's designed to work with a React app built using [Create React App](https://create-react-app.dev). It also allows you to [automatically set the environment variables](#configuring-react-environment-variables) in your React app directly from the outputs in your SST app.
+It's designed to work with a React app built using [Create React App](https://create-react-app.dev). It also allows you to [automatically set the environment variables](#configuring-environment-variables) in your React app directly from the outputs in your SST app.
 
 The `ReactStaticSite` construct internally extends the [`StaticSite`](StaticSite.md) construct with the following pre-configured defaults.
 
@@ -120,16 +120,16 @@ There are a couple of things happening behind the scenes here:
 
 ```
 /
-  sst.jon
+  sst.json
   react-app/
 ```
 :::
 
 ### Configuring custom domains
 
-You can also configure custom domains for your React app. SST currently supports domains that are configured using [Route 53](https://aws.amazon.com/route53/). If your domains are hosted elsewhere, you can [follow this guide to migrate them to Route 53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html).
+You can also configure custom domains for your React app. SST supports domains that are shoted either on [Route 53](https://aws.amazon.com/route53/) or externally.
 
-Using the basic config.
+Using the basic config for a domain hosted on [Route 53](https://aws.amazon.com/route53/).
 
 ```js {3}
 new ReactStaticSite(this, "ReactSite", {

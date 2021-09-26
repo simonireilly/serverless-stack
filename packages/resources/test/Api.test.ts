@@ -238,6 +238,63 @@ test("accessLog-redefined", async () => {
   }).toThrow(/Cannot configure the "accessLog" when "httpApi" is a construct/);
 });
 
+test("throttling: not throttled", async () => {
+  const stack = new Stack(new App(), "stack");
+  new Api(stack, "Api", {});
+  expectCdk(stack).to(
+    haveResource("AWS::ApiGatewayV2::Stage", {
+      DefaultRouteSettings: ABSENT,
+    })
+  );
+});
+
+test("throttling: throttled", async () => {
+  const stack = new Stack(new App(), "stack");
+  new Api(stack, "Api", {
+    defaultThrottlingBurstLimit: 100,
+    defaultThrottlingRateLimit: 1000,
+  });
+  expectCdk(stack).to(
+    haveResource("AWS::ApiGatewayV2::Stage", {
+      DefaultRouteSettings: {
+        ThrottlingBurstLimit: 100,
+        ThrottlingRateLimit: 1000,
+      },
+    })
+  );
+});
+
+test("constructor: stages", async () => {
+  const stack = new Stack(new App(), "stack");
+  new Api(stack, "Api", {
+    accessLog: true,
+    routes: {
+      "GET /": "test/lambda.handler",
+    },
+    httpApi: {
+      createDefaultStage: false,
+    },
+    stages: [
+      {
+        stageName: "alpha",
+      },
+      {
+        stageName: "beta",
+      },
+    ],
+  });
+  expectCdk(stack).to(
+    haveResource("AWS::ApiGatewayV2::Stage", {
+      StageName: "alpha",
+    })
+  );
+  expectCdk(stack).to(
+    haveResource("AWS::ApiGatewayV2::Stage", {
+      StageName: "beta",
+    })
+  );
+});
+
 test("constructor: customDomain is string", async () => {
   const stack = new Stack(new App(), "stack");
   route53.HostedZone.fromLookup = jest
@@ -1844,5 +1901,19 @@ test("attachPermissions-after-addRoutes", async () => {
       },
       PolicyName: "LambdaGET3ServiceRoleDefaultPolicy21DC01C7",
     })
+  );
+});
+
+test("arn property", async () => {
+  const stack = new Stack(new App(), "stack");
+  const api = new Api(stack, "Api", {});
+  expect(api.httpApiArn).toBeDefined();
+
+  const apiId = api.httpApi.apiId;
+  const region = Stack.of(api).region;
+  const partition = Stack.of(api).partition;
+
+  expect(api.httpApiArn).toContain(
+    `arn:${partition}:apigateway:${region}::/apis/${apiId}`
   );
 });

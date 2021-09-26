@@ -18,6 +18,12 @@ import * as cfOrigins from "@aws-cdk/aws-cloudfront-origins";
 import { AwsCliLayer } from "@aws-cdk/lambda-layer-awscli";
 
 import { App } from "./App";
+import {
+  BaseSiteReplaceProps,
+  BaseSiteEnvironmentOutputsInfo,
+  buildErrorResponsesFor404ErrorPage,
+  buildErrorResponsesForRedirectToIndex,
+} from "./BaseSite";
 
 export enum StaticSiteErrorOptions {
   REDIRECT_TO_INDEX_PAGE = "REDIRECT_TO_INDEX_PAGE",
@@ -35,6 +41,7 @@ export interface StaticSiteProps {
   readonly s3Bucket?: s3.BucketProps;
   readonly cfDistribution?: StaticSiteCdkDistributionProps;
   readonly environment?: { [key: string]: string };
+  readonly disablePlaceholder?: boolean;
 }
 
 export interface StaticSiteDomainProps {
@@ -42,6 +49,7 @@ export interface StaticSiteDomainProps {
   readonly domainAlias?: string;
   readonly hostedZone?: string | route53.IHostedZone;
   readonly certificate?: acm.ICertificate;
+  readonly isExternalDomain?: boolean;
 }
 
 export interface StaticSiteFileOption {
@@ -50,17 +58,7 @@ export interface StaticSiteFileOption {
   readonly cacheControl: string;
 }
 
-export interface StaticSiteReplaceProps {
-  readonly files: string;
-  readonly search: string;
-  readonly replace: string;
-}
-
-export interface StaticSiteEnvironmentOutputsInfo {
-  readonly path: string;
-  readonly stack: string;
-  readonly environmentOutputs: { [key: string]: string };
-}
+export type StaticSiteReplaceProps = BaseSiteReplaceProps;
 
 export interface StaticSiteCdkDistributionProps
   extends Omit<cf.DistributionProps, "defaultBehavior"> {
@@ -76,7 +74,6 @@ export class StaticSite extends cdk.Construct {
   private readonly deployId: string;
   private readonly assets: s3Assets.Asset[];
   private readonly customResourceFn: lambda.Function;
-
   private readonly environment: Record<string, string> = {};
   private readonly replaceValues: StaticSiteReplaceProps[] = [];
 
@@ -93,7 +90,9 @@ export class StaticSite extends cdk.Construct {
         // @ts-ignore: "jestFileSizeLimitOverride" not exposed in props
         props.jestFileSizeLimitOverride || 200
       : 200;
+    const disablePlaceholder = props.disablePlaceholder || false;
 
+    this.props = props;
     this.environment = props.environment || {};
     this.replaceValues = props.replaceValues || [];
 
@@ -121,14 +120,15 @@ export class StaticSite extends cdk.Construct {
       const output = new cdk.CfnOutput(this, outputId, { value });
       environmentOutputs[key] = cdk.Stack.of(this).getLogicalId(output);
     }
-    root.registerStaticSiteEnvironment({
+    root.registerSiteEnvironment({
       id,
       path: props.path,
       stack: cdk.Stack.of(this).node.id,
       environmentOutputs,
-    } as StaticSiteEnvironmentOutputsInfo);
+    } as BaseSiteEnvironmentOutputsInfo);
 
-    this.props = props;
+    // Validate input
+    this.validateCustomDomainSettings();
 
     // Build website
     this.assets = this.buildApp(fileSizeLimit, buildDir, isSstStart, skipBuild);
@@ -142,7 +142,10 @@ export class StaticSite extends cdk.Construct {
     this.customResourceFn = this.createCustomResourceFunction();
     this.hostedZone = this.lookupHostedZone();
     this.acmCertificate = this.createCertificate();
-    this.cfDistribution = this.createCfDistribution(isSstStart);
+    this.cfDistribution = this.createCfDistribution(
+      isSstStart,
+      disablePlaceholder
+    );
     this.createRoute53Records();
     this.createS3Deployment();
   }
@@ -178,6 +181,36 @@ export class StaticSite extends cdk.Construct {
 
   public get distributionDomain(): string {
     return this.cfDistribution.distributionDomainName;
+  }
+
+  protected validateCustomDomainSettings() {
+    const { customDomain } = this.props;
+
+    if (!customDomain) {
+      return;
+    }
+
+    if (typeof customDomain === "string") {
+      return;
+    }
+
+    if (customDomain.isExternalDomain === true) {
+      if (!customDomain.certificate) {
+        throw new Error(
+          `A valid certificate is required when "isExternalDomain" is set to "true".`
+        );
+      }
+      if (customDomain.domainAlias) {
+        throw new Error(
+          `Domain alias is only supported for domains hosted on Amazon Route 53. Do not set the "customDomain.domainAlias" when "isExternalDomain" is enabled.`
+        );
+      }
+      if (customDomain.hostedZone) {
+        throw new Error(
+          `Hosted zones can only be configured for domains hosted on Amazon Route 53. Do not set the "customDomain.hostedZone" when "isExternalDomain" is enabled.`
+        );
+      }
+    }
   }
 
   private createS3Bucket(): s3.Bucket {
@@ -348,6 +381,7 @@ export class StaticSite extends cdk.Construct {
   protected lookupHostedZone(): route53.IHostedZone | undefined {
     const { customDomain } = this.props;
 
+    // Skip if customDomain is not configured
     if (!customDomain) {
       return;
     }
@@ -365,6 +399,11 @@ export class StaticSite extends cdk.Construct {
         domainName: customDomain.hostedZone,
       });
     } else if (typeof customDomain.domainName === "string") {
+      // Skip if domain is not a Route53 domain
+      if (customDomain.isExternalDomain === true) {
+        return;
+      }
+
       hostedZone = route53.HostedZone.fromLookup(this, "HostedZone", {
         domainName: customDomain.domainName,
       });
@@ -378,32 +417,44 @@ export class StaticSite extends cdk.Construct {
   private createCertificate(): acm.ICertificate | undefined {
     const { customDomain } = this.props;
 
-    if (!customDomain || !this.hostedZone) {
+    if (!customDomain) {
       return;
     }
 
     let acmCertificate;
 
-    if (typeof customDomain === "string") {
-      acmCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
-        domainName: customDomain,
-        hostedZone: this.hostedZone,
-        region: "us-east-1",
-      });
-    } else if (customDomain.certificate) {
-      acmCertificate = customDomain.certificate;
-    } else {
-      acmCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
-        domainName: customDomain.domainName,
-        hostedZone: this.hostedZone,
-        region: "us-east-1",
-      });
+    // HostedZone is set for Route 53 domains
+    if (this.hostedZone) {
+      if (typeof customDomain === "string") {
+        acmCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
+          domainName: customDomain,
+          hostedZone: this.hostedZone,
+          region: "us-east-1",
+        });
+      } else if (customDomain.certificate) {
+        acmCertificate = customDomain.certificate;
+      } else {
+        acmCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
+          domainName: customDomain.domainName,
+          hostedZone: this.hostedZone,
+          region: "us-east-1",
+        });
+      }
+    }
+    // HostedZone is NOT set for non-Route 53 domains
+    else {
+      if (typeof customDomain !== "string") {
+        acmCertificate = customDomain.certificate;
+      }
     }
 
     return acmCertificate;
   }
 
-  private createCfDistribution(isSstStart: boolean): cf.Distribution {
+  private createCfDistribution(
+    isSstStart: boolean,
+    disablePlaceholder: boolean
+  ): cf.Distribution {
     const { cfDistribution, customDomain } = this.props;
     const indexPage = this.props.indexPage || "index.html";
     const errorPage = this.props.errorPage;
@@ -435,8 +486,8 @@ export class StaticSite extends cdk.Construct {
     // Build errorResponses
     let errorResponses;
     // case: sst start => showing stub site, and redirect all routes to the index page
-    if (isSstStart) {
-      errorResponses = this.buildErrorResponsesForRedirectToIndex(indexPage);
+    if (isSstStart && !disablePlaceholder) {
+      errorResponses = buildErrorResponsesForRedirectToIndex(indexPage);
     } else if (errorPage) {
       if (cfDistributionProps.errorResponses) {
         throw new Error(
@@ -446,8 +497,8 @@ export class StaticSite extends cdk.Construct {
 
       errorResponses =
         errorPage === StaticSiteErrorOptions.REDIRECT_TO_INDEX_PAGE
-          ? this.buildErrorResponsesForRedirectToIndex(indexPage)
-          : this.buildErrorResponsesFor404ErrorPage(errorPage);
+          ? buildErrorResponsesForRedirectToIndex(indexPage)
+          : buildErrorResponsesFor404ErrorPage(errorPage);
     }
 
     // Create CF distribution
@@ -538,37 +589,5 @@ export class StaticSite extends cdk.Construct {
         ReplaceValues: this.replaceValues,
       },
     });
-  }
-
-  private buildErrorResponsesForRedirectToIndex(
-    indexPage: string
-  ): cf.ErrorResponse[] {
-    return [
-      {
-        httpStatus: 403,
-        responsePagePath: `/${indexPage}`,
-        responseHttpStatus: 200,
-      },
-      {
-        httpStatus: 404,
-        responsePagePath: `/${indexPage}`,
-        responseHttpStatus: 200,
-      },
-    ];
-  }
-
-  private buildErrorResponsesFor404ErrorPage(
-    errorPage: string
-  ): cf.ErrorResponse[] {
-    return [
-      {
-        httpStatus: 403,
-        responsePagePath: `/${errorPage}`,
-      },
-      {
-        httpStatus: 404,
-        responsePagePath: `/${errorPage}`,
-      },
-    ];
   }
 }

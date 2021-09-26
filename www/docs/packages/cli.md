@@ -3,8 +3,6 @@ title: "@serverless-stack/cli"
 description: "Docs for the @serverless-stack/cli package"
 ---
 
-import config from "../../config";
-
 The SST CLI (`@serverless-stack/cli`) allows you to build, deploy, test, and remove Serverless Stack apps.
 
 ## Installation
@@ -45,6 +43,9 @@ npx sst deploy
 
 # Remove your SST app and all the resources
 npx sst remove
+
+# Update SST and matching CDK versions
+npx sst update
 ```
 
 #### Change the default stage and region
@@ -157,6 +158,14 @@ npx sst diff
 npx sst diff stack-posts stack-users
 ```
 
+### `update`
+
+A convenience command to update SST to the latest version. It also updates any CDK packages in your `package.json` to the version used by SST.
+
+```bash
+npx sst update
+```
+
 ### `add-cdk [packages..]`
 
 Installs the given AWS CDK npm packages with the appropriate CDK version. This convenience method helps get around the [known CDK issue of version mismatches](known-issues.md). This command internally simply does and `npm install` or `yarn add`.
@@ -193,7 +202,7 @@ Runs your tests using Jest. Takes all the [Jest CLI options](https://jestjs.io/d
 
 ### `cdk`
 
-The SST CLI comes with <a href={ config.forkedCdk }>a forked version of AWS CDK</a> that it uses internally. This command gives direct access to it. To use this command you'll need to pass in the location of the CDK app. In our cases this is going to be generated in `build/run.js`. For example, to run the CDK `list` command you'll need to.
+The SST CLI comes with a version of AWS CDK that it uses internally. This command gives direct access to it. To use this command you'll need to pass in the location of the CDK app. In our cases this is going to be generated in `build/run.js`. For example, to run the CDK `list` command you'll need to.
 
 ```bash
 npx sst cdk --app=build/run.js list
@@ -211,7 +220,7 @@ Shows more debug info in the console output. Setting the verbose option also set
 
 ### `--stage`
 
-The stage you want to deploy to. Defaults to the one specified in your `sst.json`. Or uses `dev`.
+The stage you want to deploy to. If this is not specified, it will default to the stage configured during the initial run of the CLI.
 
 ### `--region`
 

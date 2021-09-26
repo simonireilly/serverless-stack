@@ -2,8 +2,8 @@
 description: "Docs for the sst.EventBus construct in the @serverless-stack/resources package"
 ---
 
-import TabItem from '@theme/TabItem';
-import MultiLanguageCode from '@site/src/components/MultiLanguageCode';
+import TabItem from "@theme/TabItem";
+import MultiLanguageCode from "@site/src/components/MultiLanguageCode";
 
 The `EventBus` construct is a higher level CDK construct that makes it easy to create an [EventBridge Event Bus](https://aws.amazon.com/eventbridge/). You can create a bus that has a list of rules and targets. And you can publish messages to it from any part of your serverless app.
 
@@ -330,7 +330,7 @@ You can create the EventBus construct in one stack, and add rules in other stack
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js {7-14} title="lib/MainStack.js"
+```js {7-14} title="stacks/MainStack.js"
 import { EventBus, Stack } from "@serverless-stack/resources";
 
 export class MainStack extends Stack {
@@ -352,7 +352,7 @@ export class MainStack extends Stack {
 </TabItem>
 <TabItem value="ts">
 
-```js {4,9-16} title="lib/MainStack.ts"
+```js {4,9-16} title="stacks/MainStack.ts"
 import { EventBus, App, Stack, StackProps } from "@serverless-stack/resources";
 
 export class MainStack extends Stack {
@@ -381,7 +381,7 @@ Then pass the EventBus to a different stack. Behind the scenes, the EventBus Arn
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js {3} title="lib/index.js"
+```js {3} title="stacks/index.js"
 const mainStack = new MainStack(app, "main");
 
 new AnotherStack(app, "another", { bus: mainStack.bus });
@@ -390,7 +390,7 @@ new AnotherStack(app, "another", { bus: mainStack.bus });
 </TabItem>
 <TabItem value="ts">
 
-```ts {3} title="lib/index.ts"
+```ts {3} title="stacks/index.ts"
 const mainStack = new MainStack(app, "main");
 
 new AnotherStack(app, "another", { bus: mainStack.bus });
@@ -404,7 +404,7 @@ Finally, call `addRules`. Note that the AWS resources for the added routes will 
 <MultiLanguageCode>
 <TabItem value="js">
 
-```js title="lib/AnotherStack.js"
+```js title="stacks/AnotherStack.js"
 import { Stack } from "@serverless-stack/resources";
 
 export class AnotherStack extends Stack {
@@ -423,7 +423,7 @@ export class AnotherStack extends Stack {
 </TabItem>
 <TabItem value="ts">
 
-```ts title="lib/AnotherStack.ts"
+```ts title="stacks/AnotherStack.ts"
 import { EventBus, App, Stack, StackProps } from "@serverless-stack/resources";
 
 interface AnotherStackProps extends StackProps {

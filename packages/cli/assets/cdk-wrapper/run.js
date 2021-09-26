@@ -8,6 +8,9 @@ process.on("uncaughtException", function (err) {
   console.error("\n" + (err.stack || err) + "\n");
   process.exit(1);
 });
+process.on("unhandledRejection", (err) => {
+  throw err;
+});
 
 const path = require("path");
 const fs = require("fs-extra");
@@ -75,6 +78,7 @@ const app = new sst.App({
   debugEndpoint: config.debugEndpoint,
   debugBucketArn: config.debugBucketArn,
   debugBucketName: config.debugBucketName,
+  debugStartedAt: config.debugStartedAt,
   debugIncreaseTimeout: config.debugIncreaseTimeout,
 });
 

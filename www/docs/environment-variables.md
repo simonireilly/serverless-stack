@@ -125,7 +125,7 @@ new Function(this, "MyFunction", {
 
 Or you can use the [App's](constructs/App.md) [`setDefaultFunctionProps`](constructs/App.md#setdefaultfunctionprops) method to set it for all the functions in your app.
 
-```js title="lib/index.js"
+```js title="stacks/index.js"
 export default function main(app) {
   app.setDefaultFunctionProps({
     environment: { MY_ENV_VAR: process.env.MY_ENV_VAR },
@@ -145,7 +145,7 @@ The `process.env.IS_LOCAL` is set in both the CDK and Lambda function code.
 
 So in your CDK code you can do something like. 
 
-``` js title="lib/MyStack.js" {6}
+``` js title="stacks/MyStack.js" {6}
 export default class MyStack extends sst.Stack {
   constructor(scope, id, props) {
     super(scope, id, props);
@@ -198,7 +198,7 @@ In this section let's compare the different ways secrets can be managed in SST. 
 - **CI usage**: SSM paths loaded from the `.env` file
 - **Security**: _BETTER_, secrets are not exposed to CI providers, but they are displayed in plain text in Lambda console and the CloudFormation template
 
-#### 3. Use the [aws-ssm](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-ssm-readme.html) construct
+#### 3. Fetch SSM values in Lambda using the AWS SDK
 
 - **Usage in CDK**: Cannot be used in CDK since it is resolved on deploy
 - **Usage in Lambda**: Fetch the SSM values inside a Lambda function using the AWS SDK

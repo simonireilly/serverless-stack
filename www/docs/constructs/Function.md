@@ -4,7 +4,7 @@ description: "Docs for the sst.Function construct in the @serverless-stack/resou
 
 import config from "../../config";
 
-A replacement for the [`cdk.lambda.NodejsFunction`](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-lambda-nodejs-readme.html) that allows you to [develop your Lambda functions locally](live-lambda-development.md). Supports ES and TypeScript out-of-the-box. It also applies a couple of defaults:
+A replacement for the [`cdk.lambda.NodejsFunction`](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-lambda-nodejs-readme.html) that allows you to [develop your Lambda functions locally](live-lambda-development.md). Supports JS, TypeScript, Python, Golang, and C#. It also applies a couple of defaults:
 
 - Sets the default memory setting to 1024MB.
 - Sets the default Lambda function timeout to 10 seconds.
@@ -93,7 +93,7 @@ module.exports = {
 
 You can now reference the config file in your functions.
 
-```js title="lib/MyStack.js" {3}
+```js title="stacks/MyStack.js" {3}
 new Function(this, "MySnsLambda", {
   bundle: {
     esbuildConfig: "config/esbuild.js",
@@ -131,7 +131,7 @@ new Function(this, "MyApiLambda", {
 });
 ```
 
-### Handling a Dead Letter Queue
+### Configuring a Dead Letter Queue
 
 ```js {5}
 const queue = new Queue(this, "MyDLQ");
@@ -158,6 +158,21 @@ new Function(this, "MyApiLambda", {
 ```
 
 The `API_KEY` environment variable can be accessed as `process.env.API_KEY` within the Lambda function.
+
+### Configuring Provisioned Concurrency
+
+```js {3-5,8}
+const fn = new Function(this, "MyApiLambda", {
+  handler: "src/api.main",
+  currentVersionOptions: {
+    provisionedConcurrentExecutions: 5,
+  },
+});
+
+const version = fn.currentVersion;
+```
+
+Note that Provisioned Concurrency needs to be configured on a specific Function version. By default, versioning is not enabled, and setting `currentVersionOptions` has no effect. By accessing the `currentVersion` property, a version is automatically created with the provided options. 
 
 ### Use the IS_LOCAL environment variable
 
@@ -197,108 +212,6 @@ Attaches the given list of [permissions](../util/Permissions.md) to the function
 
 Head over to the [`Permissions`](../util/Permissions.md) docs to read about this in detail.
 
-Let's look at this in detail. Below are the many ways to attach permissions. Starting with the most permissive option.
-
-Start with a simple function.
-
-```js
-const fun = new Function(this, "Function", { handler: "src/lambda.main" });
-```
-
-1. Giving full permissions
-
-   ```js
-   fun.attachPermissions(PermissionType.ALL);
-   ```
-
-   This allows the function admin access to all resources.
-
-2. Access to a list of services
-
-   ```js
-   fun.attachPermissions(["s3", "dynamodb"]);
-   ```
-
-   Specify a list of AWS resource types that this function has complete access to. Takes a list of strings.
-
-3. Access to a list of constructs
-
-   ```js
-   import * as sns from "@aws-cdk/aws-sns";
-
-   const sns = new sns.Topic(this, "Topic");
-   const table = new Table(this, "Table");
-
-   fun.attachPermissions([sns, table]);
-   ```
-
-   Specify which resource constructs you want to give complete access to. Currently supports:
-
-   - [Api](Api.md)
-   - [Topic](Topic.md)
-   - [Table](Table.md)
-   - [Queue](Queue.md)
-   - [Bucket](Bucket.md)
-   - [Function](Function.md)
-   - [EventBus](EventBus.md)
-   - [ApolloApi](ApolloApi.md)
-   - [AppSyncApi](AppSyncApi.md)
-   - [KinesisStream](KinesisStream.md)
-   - [WebSocketApi](WebSocketApi.md)
-   - [ApiGatewayV1Api](ApiGatewayV1Api.md)
-   - [cdk.aws-sns.Topic](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-sns.Topic.html)
-   - [cdk.aws-s3.Bucket](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-s3.Bucket.html)
-   - [cdk.aws-sqs.Queue](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-sqs.Queue.html)
-   - [cdk.aws-dynamodb.Table](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-dynamodb.Table.html)
-   - [cdk.aws-rds.ServerlessCluster](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-rds.ServerlessCluster.html)
-
-   To add to this list, please <a href={ `${config.github}/issues/new` }>open a new issue</a>.
-
-4. Access to a list of specific permissions in a construct
-
-   ```js
-   import * as dynamodb from "@aws-cdk/aws-dynamodb";
-
-   const sns = new sns.Topic(this, "Topic");
-   const table = new dynamodb.Table(this, "Table");
-
-   fun.attachPermissions([
-     [topic, "grantPublish"],
-     [table, "grantReadData"],
-   ]);
-   ```
-
-   Specify which permission in the construct you want to give access to. Specified as a tuple of construct and a grant permission function.
-
-   CDK constructs have methods of the format _grantX_ that allow you to grant specific permissions. So in the example above, the grant functions are: [`Topic.grantPublish`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-sns.Topic.html#grantwbrpublishgrantee) and [`Table.grantReadData`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-dynamodb.Table.html#grantwbrreadwbrdatagrantee). The `attachPermissions` method, takes the construct and calls the grant permission function specified.
-
-   Unlike option #3, this supports all the CDK constructs.
-
-5. A list of IAM policies
-
-   ```js
-   import * as iam from "@aws-cdk/aws-iam";
-
-   fun.attachPermissions([
-     new iam.PolicyStatement({
-       actions: ["s3:*"],
-       effect: iam.Effect.ALLOW,
-       resources: [
-         bucket.bucketArn + "/private/${cognito-identity.amazonaws.com:sub}/*",
-       ],
-     }),
-     new iam.PolicyStatement({
-       actions: ["execute-api:Invoke"],
-       effect: iam.Effect.ALLOW,
-       resources: [
-         `arn:aws:execute-api:${region}:${account}:${api.httpApiId}/*`,
-       ],
-     }),
-   ]);
-   ```
-
-   The [`cdk.aws-iam.PolicyStatement`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-iam.PolicyStatement.html) allows you to craft granular IAM policies that you can attach to the function.
-
 ## FunctionProps
 
 Takes the following construct props in addition to the [`cdk.lambda.FunctionOptions`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-lambda.FunctionOptions.html).
@@ -329,6 +242,50 @@ Path to the handler function. Uses the format, `/path/to/file.go` or just `/path
 
 If the [`srcPath`](#srcpath) is set, then the path to the `handler` is relative to it. So if the `srcPath` is set to `src`. Then `lambda.go` as the `handler` would mean that the file is in `src/lambda.go`.
 
+#### C# (.NET) runtime
+
+Path to the handler function. Uses the format, `ASSEMBLY::TYPE::METHOD`.
+
+- `ASSEMBLY` is the name of the .NET assembly file. If you haven't set the assembly name using the `AssemblyName` property in `.csproj`, the `ASSEMBLY` name will be the `.csproj` file name.
+- `TYPE` is the full name of the handler type. Consists of the `Namespace` and the `ClassName`.
+- `METHOD` is the name of the function handler.
+
+Consider a project with `MyApp.csproj` and the following handler function:
+
+```csharp
+namespace Example
+{            
+  public class Hello
+  {
+    public Stream MyHandler(Stream stream)
+    {
+       //function logic
+    }
+  }
+}
+```
+
+The handler would be, `MyApp::Example.Hello::MyHandler`.
+
+#### F# (.NET) runtime
+
+The handler function. Uses the format, `ASSEMBLY::TYPE::METHOD`.
+
+- `ASSEMBLY` is the name of the .NET assembly file. If you haven't set the assembly name using the AssemblyName property in .fsproj, the `ASSEMBLY` name will be the .fsproj file name.
+- `TYPE` is the full name of the handler type, which consists of the `Namespace` and the `ClassName`.
+- `METHOD` is the name of the function handler.
+
+Consider a project with `MyApp.fsproj` and the following handler function:
+```csharp
+namespace Example
+
+module Hello =
+
+  let Handler(request:APIGatewayHttpApiV2ProxyRequest) =
+     //function logic
+```
+The handler would be: `MyApp::Example.Hello::MyHandler`.
+
 ### bundle?
 
 _Type_ : `boolean | FunctionBundleNodejsProps | FunctionBundlePythonProps`, _defaults to_ `true`
@@ -357,6 +314,14 @@ Note that for Python functions, you'll need to have Docker installed. When build
 
 Only supported for the **Node.js** and **Python** runtimes.
 
+#### C# (.NET) runtime
+
+Only supported for the **Node.js** and **Python** runtimes.
+
+#### F# (.NET) runtime
+
+Only supported for the **Node.js** and **Python** runtimes.
+
 ### srcPath?
 
 _Type_ : `string`, _defaults to the project root_
@@ -374,6 +339,14 @@ For Python functions, `srcPath` is required. This is the directory where the `re
 #### Go runtime
 
 The directory where `go.mod` is found.
+
+#### C# (.NET) runtime
+
+The directory where `.csproj` is found.
+
+#### F# (.NET) runtime
+
+The directory where `.fsproj` is found.
 
 ### enableLiveDev?
 
@@ -397,7 +370,7 @@ The function execution timeout in seconds. You can pass in the timeout as a `num
 
 _Type_ : `string | cdk.lambda.Runtime`, _defaults to_ `nodejs12.x`
 
-The runtime environment. You can pass in the runtime as a `string` or as [`cdk.lambda.Runtime`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-lambda.Runtime.html). Only runtimes of the Node.js, Go, and Python family are supported.
+The runtime environment. You can pass in the runtime as a `string` or as [`cdk.lambda.Runtime`](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-lambda.Runtime.html). Only runtimes of the Node.js, Python, Go, and .NET (C# and F#) family are supported.
 
 ### tracing?
 
@@ -407,7 +380,7 @@ Turns on [AWS X-RAY for the Lambda function](https://docs.aws.amazon.com/lambda/
 
 ### permissions?
 
-_Type_ : [`Permissions`](../util/Permissions.md), _defaults to_ `cdk.lambda.Tracing.ACTIVE`
+_Type_ : [`Permissions`](../util/Permissions.md), _defaults to_ `[]`
 
 Attaches the given list of [permissions](../util/Permissions.md) to the function. Configuring this property is equivalent to calling [`attachPermissions`](#attachpermissions) after the function is created.
 

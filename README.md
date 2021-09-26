@@ -15,10 +15,10 @@
 Serverless Stack (SST) is a framework that makes it easy to build serverless apps. It's an extension of [AWS CDK](https://aws.amazon.com/cdk/) and it features:
 
 - A [Live Lambda Development][live] environment
-- Support for setting [breakpoints and debugging in VS Code](https://docs.serverless-stack.com/debugging-with-vscode)
-- [Higher-level constructs][resources] designed specifically for serverless apps
-- Zero-config support for Go, Python, ES and TypeScript using [esbuild](https://esbuild.github.io)
+- Support for [setting breakpoints and debugging in VS Code](https://docs.serverless-stack.com/debugging-with-vscode)
 - Support for [deploying to multiple environments and regions](https://docs.serverless-stack.com/deploying-your-app#deploying-to-a-stage)
+- [Higher-level constructs][resources] designed specifically for serverless apps
+- Zero-config support for JS and TS (using [esbuild](https://esbuild.github.io)), Go, Python, C#, and F#
 
 ## Quick Start
 
@@ -77,10 +77,12 @@ SST also comes with [a set of serverless specific higher-level CDK constructs][r
 - [Table](https://docs.serverless-stack.com/constructs/Table) for adding DynamoDB tables
 - [Topic](https://docs.serverless-stack.com/constructs/Topic) for creating pub/sub systems
 - [StaticSite](https://docs.serverless-stack.com/constructs/StaticSite) for creating static websites
-- [EventBus](https://docs.serverless-stack.com/constructs/EventBus) for creating EventBridge Event buses
+- [NextjsSite](https://docs.serverless-stack.com/constructs/NextjsSite) for creating Next.js websites
+- [Script](https://docs.serverless-stack.com/constructs/Script) for running scripts while deploying
 - [KinesisStream](https://docs.serverless-stack.com/constructs/KinesisStream) for real-time data streaming
 - [WebSocketApi](https://docs.serverless-stack.com/constructs/WebSocketApi) for creating WebSocket APIs
 - [ApolloApi](https://docs.serverless-stack.com/constructs/ApolloApi) for using Apollo Server with Lambda
+- [EventBus](https://docs.serverless-stack.com/constructs/EventBus) for creating EventBridge Event buses
 - [AppSyncApi](https://docs.serverless-stack.com/constructs/AppSyncApi) for creating AppSync GraphQL APIs
 - [ApiGatewayV1Api](https://docs.serverless-stack.com/constructs/ApiGatewayV1Api) for using AWS API Gateway v1
 - [ReactStaticSite](https://docs.serverless-stack.com/constructs/ReactStaticSite) for creating React static websites
@@ -99,5 +101,5 @@ Internally, SST uses the CDK CLI to invoke the various CDK commands.
 [slack]: https://launchpass.com/serverless-stack
 [resources]: https://docs.serverless-stack.com/packages/resources
 [live]: https://docs.serverless-stack.com/live-lambda-development
-[roadmap]: https://github.com/serverless-stack/serverless-stack/projects/1
+[roadmap]: https://github.com/serverless-stack/serverless-stack/projects/2
 [requests]: https://github.com/serverless-stack/serverless-stack/discussions/categories/ideas?discussions_q=category%3AIdeas+sort%3Atop+is%3Aunanswered

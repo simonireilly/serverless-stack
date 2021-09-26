@@ -1,11 +1,15 @@
 import * as cdk from "@aws-cdk/core";
+import { FunctionProps } from "./Function";
 import { App } from "./App";
 import { isConstruct } from "./util/construct";
+import { Permissions } from "./util/permission";
+import { ILayerVersion } from "@aws-cdk/aws-lambda";
 
 export type StackProps = cdk.StackProps;
 
 export class Stack extends cdk.Stack {
   public readonly stage: string;
+  public readonly defaultFunctionProps: FunctionProps[];
 
   constructor(scope: cdk.Construct, id: string, props?: StackProps) {
     const root = scope.node.root as App;
@@ -23,6 +27,37 @@ export class Stack extends cdk.Stack {
     });
 
     this.stage = root.stage;
+    this.defaultFunctionProps = root.defaultFunctionProps.map((dfp) =>
+      typeof dfp === "function" ? dfp(this) : dfp
+    );
+
+    this.addMetadataResource();
+  }
+
+  setDefaultFunctionProps(props: FunctionProps): void {
+    if (this.node.children.length > 1)
+      throw new Error(
+        "Default function props for the stack must be set before any resources have been added. Use 'addDefaultFunctionEnv' or 'addDefaultFunctionPermissions' instead to add more default properties."
+      );
+    this.defaultFunctionProps.push(props);
+  }
+
+  addDefaultFunctionPermissions(permissions: Permissions) {
+    this.defaultFunctionProps.push({
+      permissions,
+    });
+  }
+
+  addDefaultFunctionEnv(environment: Record<string, string>) {
+    this.defaultFunctionProps.push({
+      environment,
+    });
+  }
+
+  addDefaultFunctionLayers(layers: ILayerVersion[]) {
+    this.defaultFunctionProps.push({
+      layers,
+    });
   }
 
   public addOutputs(outputs: {
@@ -37,6 +72,16 @@ export class Stack extends cdk.Stack {
       } else {
         new cdk.CfnOutput(this, key, value);
       }
+    });
+  }
+
+  private addMetadataResource(): void {
+    // Add a placeholder resource to ensure stacks with just an imported construct
+    // has at least 1 resource, so the deployment succeeds.
+    // For example: users often create a stack and use it to import a VPC. The
+    //              stack does not have any resources.
+    new cdk.CfnResource(this, "SSTMetadata", {
+      type: "AWS::CDK::Metadata",
     });
   }
 
