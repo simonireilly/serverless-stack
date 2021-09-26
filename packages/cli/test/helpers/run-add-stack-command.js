@@ -1,13 +1,10 @@
 const { promisify } = require("util");
 const { exec } = require("child_process");
-const yarnInstall = require("./yarn-install");
 
 const execPromise = promisify(exec);
 const TIMEOUT = 5000;
 
 async function runAddStackCommand(cwd, stackName) {
-  await yarnInstall(cwd);
-
   let result, error;
 
   try {

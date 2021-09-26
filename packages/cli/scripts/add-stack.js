@@ -20,10 +20,6 @@ const TEMPLATE_EXTENSION_LOOKUP = {
 module.exports = async function (argv, config) {
   const { stackName } = argv;
 
-  logger.info(
-    chalk.cyan(`import ${newStackFileName} from './${newStackFileName}`)
-  );
-
   // Must have a string name for the stack
   if (typeof stackName !== "string") {
     logger.info(chalk.red(`Supply a stack name 'sst add-stack [stack-name]'`));
