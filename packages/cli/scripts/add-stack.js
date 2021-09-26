@@ -1,8 +1,8 @@
 "use strict";
 
-// Given an existing serverless stack project, detect the lib/infra
-// folder and add the new stack to that folder
-
+// Given an existing serverless stack project, detect the stacks folder and add
+// the new stack to that folder
+//
 // This will increase the speed of building multi-stack applications, whilst
 // also showing (tell don't ask) how to configure multiple stacks
 
@@ -19,6 +19,10 @@ const TEMPLATE_EXTENSION_LOOKUP = {
 
 module.exports = async function (argv, config) {
   const { stackName } = argv;
+
+  logger.info(
+    chalk.cyan(`import ${newStackFileName} from './${newStackFileName}`)
+  );
 
   // Must have a string name for the stack
   if (typeof stackName !== "string") {
@@ -50,7 +54,7 @@ module.exports = async function (argv, config) {
   const newStackFileLocation = path.join(process.cwd(), dir, newStackFileName);
   logger.info(chalk.cyan(`Adding new stack ${newStackFileLocation}`));
 
-  // Create app directory
+  // Write the new stack file
   if (!fs.existsSync(newStackFileLocation)) {
     fs.writeFileSync(newStackFileLocation, newStackFile);
   } else {
@@ -63,7 +67,10 @@ module.exports = async function (argv, config) {
   logger.info(
     chalk.cyan(`Stack created, import it in ${config.main} to deploy`)
   );
+
   logger.info(
     chalk.cyan(`import ${newStackFileName} from './${newStackFileName}`)
   );
+
+  process.exit(0);
 };

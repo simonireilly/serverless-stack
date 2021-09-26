@@ -1,4 +1,10 @@
-const { runAdd, clearBuildOutput } = require("../helpers");
+const { runAddStackCommand, clearBuildOutput } = require("../helpers");
+
+jest.mock("fs", () => ({
+  ...jest.requireActual("fs"),
+  writeFileSync: jest.fn(),
+  readFileSync: jest.fn(),
+}));
 
 beforeEach(async () => {
   await clearBuildOutput(__dirname);
@@ -11,8 +17,9 @@ afterAll(async () => {
 /**
  * Test that the add-cdk command ran successfully
  */
-test("add-cdk", async () => {
-  const result = await runAdd(__dirname, "@aws-cdk/aws-s3 @aws-cdk/aws-iam");
+describe("add-stack", () => {});
+test("add-stack", async () => {
+  const result = await runAddStackCommand(__dirname);
 
   expect(result).toMatch(
     /npm install --save-exact @aws-cdk\/aws-s3@\d+.\d+.\d+ @aws-cdk\/aws-iam@\d+.\d+.\d+/

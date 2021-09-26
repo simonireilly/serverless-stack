@@ -408,6 +408,8 @@ async function run() {
   const cliInfo = getCliInfo();
   const config = await applyConfig(argv);
 
+  console.info("Using local");
+
   switch (script) {
     case cmd.diff:
     case cmd.build:
@@ -426,6 +428,7 @@ async function run() {
       break;
     }
     case cmd.start:
+    case cmd.addStack:
     case cmd.addCdk: {
       if (script === cmd.start) logger.info("Using stage:", config.stage);
       internals[script](argv, config, cliInfo).catch((e) => {
@@ -435,7 +438,6 @@ async function run() {
       break;
     }
     case cmd.cdk:
-    case cmd.addStack:
     case cmd.test: {
       // Prepare app
       prepareCdk(argv, cliInfo, config)

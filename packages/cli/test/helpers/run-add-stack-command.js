@@ -3,15 +3,18 @@ const { exec } = require("child_process");
 const yarnInstall = require("./yarn-install");
 
 const execPromise = promisify(exec);
-const TIMEOUT = 30000;
+const TIMEOUT = 5000;
 
-async function runAddCdkCommand(cwd, stackName) {
+async function runAddStackCommand(cwd, stackName) {
   await yarnInstall(cwd);
 
   let result, error;
 
   try {
-    result = await execPromise(`yarn add-stack ${stackName}`, { cwd, TIMEOUT });
+    result = await execPromise(`yarn sst add-stack ${stackName}`, {
+      cwd,
+      TIMEOUT,
+    });
   } catch (e) {
     error = e.toString() + e.stdout;
   }
@@ -21,4 +24,4 @@ async function runAddCdkCommand(cwd, stackName) {
     : result.stdout.toString("utf8") + result.stderr.toString("utf8");
 }
 
-module.exports = runAddCdkCommand;
+module.exports = runAddStackCommand;
