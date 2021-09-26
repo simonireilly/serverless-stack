@@ -55,6 +55,7 @@ const cmd = {
   deploy: "deploy",
   remove: "remove",
   addCdk: "add-cdk",
+  addStack: "add-stack",
   update: "update",
 };
 
@@ -65,6 +66,7 @@ const internals = {
   [cmd.deploy]: require("../scripts/deploy"),
   [cmd.remove]: require("../scripts/remove"),
   [cmd.addCdk]: require("../scripts/add-cdk"),
+  [cmd.addStack]: require("../scripts/add-stack"),
 };
 
 const DEFAULT_STAGE = "dev";
@@ -345,6 +347,10 @@ const argv = yargs
       },
     }
   )
+  .command(
+    `${cmd.addStack} [stack-name]`,
+    "Adds another named stack to you app"
+  )
 
   .example([
     [`$0 ${cmd.start}`, "Start using the defaults"],
@@ -402,6 +408,8 @@ async function run() {
   const cliInfo = getCliInfo();
   const config = await applyConfig(argv);
 
+  console.info("Using local");
+
   switch (script) {
     case cmd.diff:
     case cmd.build:
@@ -420,13 +428,13 @@ async function run() {
       break;
     }
     case cmd.start:
+    case cmd.addStack:
     case cmd.addCdk: {
       if (script === cmd.start) logger.info("Using stage:", config.stage);
       internals[script](argv, config, cliInfo).catch((e) => {
         logger.debug(e);
         exitWithMessage(e.message);
       });
-
       break;
     }
     case cmd.cdk:

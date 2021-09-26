@@ -6,6 +6,7 @@ cdk.out
 package-lock.json
 # Ignore templates
 /packages/create-serverless-stack/templates/**
+/packages/cli/templates/**
 # Ignore markdown files in the docs
 # it breaks the formatting
 /www/docs/**/*.md

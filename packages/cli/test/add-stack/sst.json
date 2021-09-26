@@ -1,0 +1,6 @@
+{
+  "name": "add-cdk",
+  "stage": "prod",
+  "region": "us-west-1",
+  "main": "configurable/index.js"
+}
