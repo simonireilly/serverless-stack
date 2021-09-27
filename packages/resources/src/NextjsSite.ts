@@ -78,6 +78,40 @@ export class NextjsSite extends cdk.Construct {
   private readonly replaceValues: BaseSiteReplaceProps[] = [];
   private readonly routesManifest: RoutesManifest | null;
 
+  /**
+    We need to define all the constructs for all the resources; before
+    registering the updater code.
+
+    We also need to support system Env Var mapping e.g.
+
+    {
+      "MY_SITE_URL": NextjsSite.site_url
+    }
+
+    // OR using a bind
+
+    {
+      "MY_SITE_URL": () => nextJsSite.cfDistribution.domainName
+    }
+
+    From each function constructor:
+
+    Part 1:
+
+    1. Push the asset and function into an array.
+    2. Call the updater register at the end of the main constructor.
+
+    Part 2:
+
+    1. Update environment replace to replace the static variables with
+       placeholders. If the variable is a function, set the value to a map of
+       {
+         placeholder: ():string => {}
+       }
+    2. In the register for updater, get the actual cdk token, for each of the
+       static variables. By evaluating the function.
+  */
+
   constructor(scope: cdk.Construct, id: string, props: NextjsSiteProps) {
     super(scope, id);
 
