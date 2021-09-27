@@ -111,6 +111,10 @@ export class NextjsSite extends cdk.Construct {
     2. In the register for updater, get the actual cdk token, for each of the
        static variables. By evaluating the function.
   */
+  private readonly assetUpdaters: {
+    fn: lambda.Function;
+    asset: s3Assets.Asset;
+  }[] = [];
 
   constructor(scope: cdk.Construct, id: string, props: NextjsSiteProps) {
     super(scope, id);

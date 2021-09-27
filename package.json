@@ -4,6 +4,7 @@
   "license": "MIT",
   "private": true,
   "workspaces": [
+    "latest",
     "packages/*",
     "packages/cli/test/*",
     "packages/static-site-env/test/*"
