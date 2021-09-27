@@ -112,9 +112,11 @@ export class NextjsSite extends cdk.Construct {
        static variables. By evaluating the function.
   */
   private readonly assetUpdaters: {
-    fn: lambda.Function;
-    asset: s3Assets.Asset;
-  }[] = [];
+    [key: string]: {
+      fn: lambda.Function;
+      asset: s3Assets.Asset;
+    };
+  } = {};
 
   constructor(scope: cdk.Construct, id: string, props: NextjsSiteProps) {
     super(scope, id);
@@ -139,6 +141,7 @@ export class NextjsSite extends cdk.Construct {
     //     environment => API_URL="{{ API_URL }}"
     //
     const environmentOutputs: Record<string, string> = {};
+
     for (const [key, value] of Object.entries(this.props.environment || {})) {
       const token = `{{ ${key} }}`;
       this.buildCmdEnvironment[key] = token;
@@ -163,6 +166,7 @@ export class NextjsSite extends cdk.Construct {
       const output = new cdk.CfnOutput(this, outputId, { value });
       environmentOutputs[key] = cdk.Stack.of(this).getLogicalId(output);
     }
+
     root.registerSiteEnvironment({
       id,
       path: props.path,
@@ -224,6 +228,9 @@ export class NextjsSite extends cdk.Construct {
 
     // Connect Custom Domain to CloudFront Distribution
     this.createRoute53Records();
+
+    // For env vars only known after deploy, register them here
+    this.drainLambdaCodeUploader();
   }
 
   public get url(): string {
@@ -385,6 +392,22 @@ export class NextjsSite extends cdk.Construct {
       ...s3Bucket,
     });
   }
+  /** Capture lambda function */
+  private registerLambdaCodeUploader(
+    name: string,
+    asset: s3Assets.Asset,
+    fn: lambda.Function
+  ) {
+    this.assetUpdaters[name] = { fn, asset };
+  }
+
+  // Create
+  private drainLambdaCodeUploader() {
+    Object.entries(this.assetUpdaters).forEach(([name, { fn, asset }]) => {
+      const updaterCR = this.createLambdaCodeUpdater(name, asset);
+      fn.node.addDependency(updaterCR);
+    });
+  }
 
   private createMainFunction(): lambda.Function {
     const { defaultFunctionProps: fnProps } = this.props;
@@ -451,16 +474,15 @@ export class NextjsSite extends cdk.Construct {
     // - Next.js app was build; AND
     // - the Lambda code directory is not empty
     let code;
-    let updaterCR;
+    let asset;
     if (
       this.buildOutDir &&
       fs.pathExistsSync(path.join(this.buildOutDir, "api-lambda", "index.js"))
     ) {
-      const asset = new s3Assets.Asset(this, `ApiFunctionAsset`, {
+      asset = new s3Assets.Asset(this, `ApiFunctionAsset`, {
         path: path.join(this.buildOutDir, "api-lambda"),
       });
       code = lambda.Code.fromAsset(path.join(this.buildOutDir, "api-lambda"));
-      updaterCR = this.createLambdaCodeUpdater("Api", asset);
     } else {
       code = lambda.Code.fromInline(" ");
     }
@@ -491,8 +513,8 @@ export class NextjsSite extends cdk.Construct {
     }
 
     // Deploy after the code is updated
-    if (updaterCR) {
-      fn.node.addDependency(updaterCR);
+    if (asset) {
+      this.registerLambdaCodeUploader("Api", asset, fn);
     }
 
     return fn;
@@ -873,11 +895,14 @@ export class NextjsSite extends cdk.Construct {
         compress: true,
         cachePolicy: lambdaCachePolicy,
         ...(cfDistributionProps.defaultBehavior || {}),
-        // concatenate edgeLambdas
-        edgeLambdas: [
-          ...edgeLambdas,
-          ...(cfDistributionProps.defaultBehavior?.edgeLambdas || []),
-        ],
+        // // concatenate edgeLambdas
+        // Remove edge lambda's; rely only on specified behaviour, so they can
+        // be defined after
+        //
+        // edgeLambdas: [
+        //   ...edgeLambdas,
+        //   ...(cfDistributionProps.defaultBehavior?.edgeLambdas || []),
+        // ],
       },
       additionalBehaviors: {
         [this.pathPattern("_next/image*")]: {
