@@ -74,6 +74,7 @@ export class NextjsSite extends cdk.Construct {
   private readonly assets: s3Assets.Asset[];
   private readonly awsCliLayer: AwsCliLayer;
   private readonly lambdaCodeUpdaterCRFunction: lambda.Function;
+  private readonly lambdaCachePolicy: cloudfront.CachePolicy;
   private readonly buildCmdEnvironment: Record<string, string> = {};
   private readonly replaceValues: BaseSiteReplaceProps[] = [];
   private readonly routesManifest: RoutesManifest | null;
@@ -162,6 +163,44 @@ export class NextjsSite extends cdk.Construct {
       this.routesManifest = this.readRoutesManifest();
     }
 
+    // Create Custom Domain
+    this.validateCustomDomainSettings();
+    this.hostedZone = this.lookupHostedZone();
+    this.acmCertificate = this.createCertificate();
+
+    // Create CloudFront
+    this.lambdaCachePolicy = this.createCloudFrontLambdaCachePolicy();
+    this.cfDistribution = this.createCloudFrontDistribution();
+
+    // Dirty Hack to check if it works
+    const key = "SITE_URL";
+    const token = `{{ ${key} }}`;
+    this.buildCmdEnvironment[key] = token;
+    this.replaceValues.push(
+      {
+        files: "**/*.html",
+        search: token,
+        replace: this.cfDistribution.domainName,
+      },
+      {
+        files: "**/*.js",
+        search: token,
+        replace: this.cfDistribution.domainName,
+      },
+      {
+        files: "**/*.json",
+        search: token,
+        replace: this.cfDistribution.domainName,
+      }
+    );
+
+    // Deployment bucket that has updated code
+    //
+    // Create S3 Deployment
+    const s3deployCR = this.createS3Deployment();
+    // Don't deploy cloudfront until the s3 bucket is updated
+    this.cfDistribution.node.addDependency(s3deployCR);
+
     // Handle Incremental Static Regeneration
     this.regenerationQueue = this.createRegenerationQueue();
     this.regenerationFunction = this.createRegenerationFunction();
@@ -171,25 +210,21 @@ export class NextjsSite extends cdk.Construct {
     this.apiFunction = this.createApiFunction();
     this.imageFunction = this.createImageFunction();
 
-    // Create Custom Domain
-    this.validateCustomDomainSettings();
-    this.hostedZone = this.lookupHostedZone();
-    this.acmCertificate = this.createCertificate();
-
-    // Create S3 Deployment
-    const s3deployCR = this.createS3Deployment();
-
-    // Create CloudFront
-    this.cfDistribution = this.createCloudFrontDistribution();
-
-    // Deployment bucket that has updated code
+    // Commented out due to circular with distribution
     //
-    // Code in this bucket also uses replace values, and it is the origin bucket
-    // need to chink if there is a clean way to add this origin later.
-    this.cfDistribution.node.addDependency(s3deployCR);
+    // Lambda@Edge waits for:
+    // 1. The distribution deploy
+    // 2. The custom resource that updates its source code
+    //
+    // this.mainFunction.node.addDependency(this.cfDistribution);
+    // this.apiFunction.node.addDependency(this.cfDistribution);
+    // this.imageFunction.node.addDependency(this.cfDistribution);
 
-    // With a known distribution add all additional behaviors after creation
-    this.assignAdditionalBehaviorsAfterCreation();
+    // Commented out due to circular with distribution
+    //
+    // With a known distribution add all additional behaviors after Lambda@Edge
+    // code has been updated
+    // this.assignAdditionalBehaviorsAfterCreation();
 
     // Invalidate CloudFront
     const invalidationCR = this.createCloudFrontInvalidation();
@@ -433,7 +468,7 @@ export class NextjsSite extends cdk.Construct {
         path: path.join(this.buildOutDir, "api-lambda"),
       });
       code = lambda.Code.fromAsset(path.join(this.buildOutDir, "api-lambda"));
-      updaterCR = this.createLambdaCodeUpdater("Main", asset);
+      updaterCR = this.createLambdaCodeUpdater("Api", asset);
     } else {
       code = lambda.Code.fromInline(" ");
     }
@@ -812,8 +847,6 @@ export class NextjsSite extends cdk.Construct {
       });
     }
 
-    const lambdaCachePolicy = this.createCloudFrontLambdaCachePolicy();
-
     // Create Distribution
     return new cloudfront.Distribution(this, "Distribution", {
       // these values can be overwritten by cfDistributionProps
@@ -830,7 +863,7 @@ export class NextjsSite extends cdk.Construct {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
         compress: true,
-        cachePolicy: lambdaCachePolicy,
+        cachePolicy: this.lambdaCachePolicy,
       },
     });
   }
@@ -859,7 +892,7 @@ export class NextjsSite extends cdk.Construct {
     // Build cache policy
     const staticsCachePolicy = this.createCloudFrontStaticCachePolicy();
     const imageCachePolicy = this.createCloudFrontImageCachePolicy();
-    const lambdaCachePolicy = this.createCloudFrontLambdaCachePolicy();
+
     const origin = new origins.S3Origin(this.s3Bucket, {
       originPath: this.deployId,
     });
@@ -894,7 +927,7 @@ export class NextjsSite extends cdk.Construct {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
         compress: true,
-        cachePolicy: lambdaCachePolicy,
+        cachePolicy: this.lambdaCachePolicy,
         edgeLambdas,
       },
       [this.pathPattern("_next/*")]: {
@@ -919,7 +952,7 @@ export class NextjsSite extends cdk.Construct {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
         compress: true,
-        cachePolicy: lambdaCachePolicy,
+        cachePolicy: this.lambdaCachePolicy,
         edgeLambdas: [
           {
             includeBody: true,
@@ -934,7 +967,7 @@ export class NextjsSite extends cdk.Construct {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
         compress: true,
-        cachePolicy: lambdaCachePolicy,
+        cachePolicy: this.lambdaCachePolicy,
         ...(cfDistributionProps.defaultBehavior || {}),
         // concatenate edgeLambdas
         edgeLambdas: [
