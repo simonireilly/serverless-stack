@@ -78,46 +78,6 @@ export class NextjsSite extends cdk.Construct {
   private readonly replaceValues: BaseSiteReplaceProps[] = [];
   private readonly routesManifest: RoutesManifest | null;
 
-  /**
-    We need to define all the constructs for all the resources; before
-    registering the updater code.
-
-    We also need to support system Env Var mapping e.g.
-
-    {
-      "MY_SITE_URL": NextjsSite.site_url
-    }
-
-    // OR using a bind
-
-    {
-      "MY_SITE_URL": () => nextJsSite.cfDistribution.domainName
-    }
-
-    From each function constructor:
-
-    Part 1:
-
-    1. Push the asset and function into an array.
-    2. Call the updater register at the end of the main constructor.
-
-    Part 2:
-
-    1. Update environment replace to replace the static variables with
-       placeholders. If the variable is a function, set the value to a map of
-       {
-         placeholder: ():string => {}
-       }
-    2. In the register for updater, get the actual cdk token, for each of the
-       static variables. By evaluating the function.
-  */
-  private readonly assetUpdaters: {
-    [key: string]: {
-      fn: lambda.Function;
-      asset: s3Assets.Asset;
-    };
-  } = {};
-
   constructor(scope: cdk.Construct, id: string, props: NextjsSiteProps) {
     super(scope, id);
 
@@ -179,7 +139,8 @@ export class NextjsSite extends cdk.Construct {
 
     // Note: Source code for the Lambda functions have "{{ ENV_KEY }}" in them.
     //       They need to be replaced with real values before the Lambda
-    //       functions get deployed.
+    //       functions get deployed. But after the cloudfront distribution is
+    //       deployed
     this.lambdaCodeUpdaterCRFunction = this.createLambdaCodeUpdaterCRFunction();
 
     // Build app
@@ -220,7 +181,15 @@ export class NextjsSite extends cdk.Construct {
 
     // Create CloudFront
     this.cfDistribution = this.createCloudFrontDistribution();
+
+    // Deployment bucket that has updated code
+    //
+    // Code in this bucket also uses replace values, and it is the origin bucket
+    // need to chink if there is a clean way to add this origin later.
     this.cfDistribution.node.addDependency(s3deployCR);
+
+    // With a known distribution add all additional behaviors after creation
+    this.assignAdditionalBehaviorsAfterCreation();
 
     // Invalidate CloudFront
     const invalidationCR = this.createCloudFrontInvalidation();
@@ -228,9 +197,6 @@ export class NextjsSite extends cdk.Construct {
 
     // Connect Custom Domain to CloudFront Distribution
     this.createRoute53Records();
-
-    // For env vars only known after deploy, register them here
-    this.drainLambdaCodeUploader();
   }
 
   public get url(): string {
@@ -392,22 +358,6 @@ export class NextjsSite extends cdk.Construct {
       ...s3Bucket,
     });
   }
-  /** Capture lambda function */
-  private registerLambdaCodeUploader(
-    name: string,
-    asset: s3Assets.Asset,
-    fn: lambda.Function
-  ) {
-    this.assetUpdaters[name] = { fn, asset };
-  }
-
-  // Create
-  private drainLambdaCodeUploader() {
-    Object.entries(this.assetUpdaters).forEach(([name, { fn, asset }]) => {
-      const updaterCR = this.createLambdaCodeUpdater(name, asset);
-      fn.node.addDependency(updaterCR);
-    });
-  }
 
   private createMainFunction(): lambda.Function {
     const { defaultFunctionProps: fnProps } = this.props;
@@ -474,15 +424,16 @@ export class NextjsSite extends cdk.Construct {
     // - Next.js app was build; AND
     // - the Lambda code directory is not empty
     let code;
-    let asset;
+    let updaterCR;
     if (
       this.buildOutDir &&
       fs.pathExistsSync(path.join(this.buildOutDir, "api-lambda", "index.js"))
     ) {
-      asset = new s3Assets.Asset(this, `ApiFunctionAsset`, {
+      const asset = new s3Assets.Asset(this, `ApiFunctionAsset`, {
         path: path.join(this.buildOutDir, "api-lambda"),
       });
       code = lambda.Code.fromAsset(path.join(this.buildOutDir, "api-lambda"));
+      updaterCR = this.createLambdaCodeUpdater("Main", asset);
     } else {
       code = lambda.Code.fromInline(" ");
     }
@@ -513,8 +464,8 @@ export class NextjsSite extends cdk.Construct {
     }
 
     // Deploy after the code is updated
-    if (asset) {
-      this.registerLambdaCodeUploader("Api", asset, fn);
+    if (updaterCR) {
+      fn.node.addDependency(updaterCR);
     }
 
     return fn;
@@ -745,6 +696,7 @@ export class NextjsSite extends cdk.Construct {
         cacheControl: "public,max-age=31536000,immutable",
       },
     ];
+
     return new cdk.CustomResource(this, "S3Deployment", {
       serviceToken: handler.functionArn,
       resourceType: "Custom::SSTBucketDeployment",
@@ -860,6 +812,37 @@ export class NextjsSite extends cdk.Construct {
       });
     }
 
+    const lambdaCachePolicy = this.createCloudFrontLambdaCachePolicy();
+
+    // Create Distribution
+    return new cloudfront.Distribution(this, "Distribution", {
+      // these values can be overwritten by cfDistributionProps
+      defaultRootObject: "",
+      // Override props.
+      ...cfDistributionProps,
+      // these values can NOT be overwritten by cfDistributionProps
+      domainNames,
+      certificate: this.acmCertificate,
+      defaultBehavior: {
+        // Serve s3 bucket static things
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: lambdaCachePolicy,
+      },
+    });
+  }
+
+  /**
+   * addBehaviour method will add lambda at edge to the cloudfront distribution
+   * after the distribution is created; so we can know data like the domainName.
+   */
+  private assignAdditionalBehaviorsAfterCreation(): void {
+    const { cfDistribution } = this.props;
+    const cfDistributionProps = cfDistribution || {};
+
     // Build Edge functions
     const edgeLambdas: cloudfront.EdgeLambda[] = [
       {
@@ -877,17 +860,75 @@ export class NextjsSite extends cdk.Construct {
     const staticsCachePolicy = this.createCloudFrontStaticCachePolicy();
     const imageCachePolicy = this.createCloudFrontImageCachePolicy();
     const lambdaCachePolicy = this.createCloudFrontLambdaCachePolicy();
+    const origin = new origins.S3Origin(this.s3Bucket, {
+      originPath: this.deployId,
+    });
+    const viewerProtocolPolicy =
+      cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS;
 
-    // Create Distribution
-    return new cloudfront.Distribution(this, "Distribution", {
-      // these values can be overwritten by cfDistributionProps
-      defaultRootObject: "",
-      // Override props.
-      ...cfDistributionProps,
-      // these values can NOT be overwritten by cfDistributionProps
-      domainNames,
-      certificate: this.acmCertificate,
-      defaultBehavior: {
+    const additionalBehaviors = {
+      [this.pathPattern("_next/image*")]: {
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: imageCachePolicy,
+        originRequestPolicy: new cloudfront.OriginRequestPolicy(
+          this,
+          "ImageOriginRequest",
+          {
+            queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
+          }
+        ),
+        edgeLambdas: [
+          {
+            eventType: cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
+            functionVersion: this.imageFunction.currentVersion,
+          },
+        ],
+      },
+      [this.pathPattern("_next/data/*")]: {
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: lambdaCachePolicy,
+        edgeLambdas,
+      },
+      [this.pathPattern("_next/*")]: {
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: staticsCachePolicy,
+      },
+      [this.pathPattern("static/*")]: {
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: staticsCachePolicy,
+      },
+      [this.pathPattern("api/*")]: {
+        viewerProtocolPolicy,
+        origin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+        cachePolicy: lambdaCachePolicy,
+        edgeLambdas: [
+          {
+            includeBody: true,
+            eventType: cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
+            functionVersion: this.apiFunction.currentVersion,
+          },
+        ],
+      },
+      [this.pathPattern("/*")]: {
         viewerProtocolPolicy,
         origin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -895,79 +936,17 @@ export class NextjsSite extends cdk.Construct {
         compress: true,
         cachePolicy: lambdaCachePolicy,
         ...(cfDistributionProps.defaultBehavior || {}),
-        // // concatenate edgeLambdas
-        // Remove edge lambda's; rely only on specified behaviour, so they can
-        // be defined after
-        //
-        // edgeLambdas: [
-        //   ...edgeLambdas,
-        //   ...(cfDistributionProps.defaultBehavior?.edgeLambdas || []),
-        // ],
+        // concatenate edgeLambdas
+        edgeLambdas: [
+          ...edgeLambdas,
+          ...(cfDistributionProps.defaultBehavior?.edgeLambdas || []),
+        ],
       },
-      additionalBehaviors: {
-        [this.pathPattern("_next/image*")]: {
-          viewerProtocolPolicy,
-          origin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-          compress: true,
-          cachePolicy: imageCachePolicy,
-          originRequestPolicy: new cloudfront.OriginRequestPolicy(
-            this,
-            "ImageOriginRequest",
-            {
-              queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
-            }
-          ),
-          edgeLambdas: [
-            {
-              eventType: cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
-              functionVersion: this.imageFunction.currentVersion,
-            },
-          ],
-        },
-        [this.pathPattern("_next/data/*")]: {
-          viewerProtocolPolicy,
-          origin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-          compress: true,
-          cachePolicy: lambdaCachePolicy,
-          edgeLambdas,
-        },
-        [this.pathPattern("_next/*")]: {
-          viewerProtocolPolicy,
-          origin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-          compress: true,
-          cachePolicy: staticsCachePolicy,
-        },
-        [this.pathPattern("static/*")]: {
-          viewerProtocolPolicy,
-          origin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-          compress: true,
-          cachePolicy: staticsCachePolicy,
-        },
-        [this.pathPattern("api/*")]: {
-          viewerProtocolPolicy,
-          origin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-          compress: true,
-          cachePolicy: lambdaCachePolicy,
-          edgeLambdas: [
-            {
-              includeBody: true,
-              eventType: cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
-              functionVersion: this.apiFunction.currentVersion,
-            },
-          ],
-        },
-        ...(cfDistributionProps.additionalBehaviors || {}),
-      },
+      ...(cfDistributionProps.additionalBehaviors || {}),
+    };
+
+    Object.entries(additionalBehaviors).forEach(([pathPattern, behavior]) => {
+      this.cfDistribution.addBehavior(pathPattern, behavior.origin, behavior);
     });
   }
 
